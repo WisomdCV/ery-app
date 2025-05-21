@@ -5,13 +5,14 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/context/AuthContext';
 import MainLayout from '@/components/MainLayout';
+import Link from 'next/link'; // Importar Link de Next.js
 
 interface UserFromApi {
   id: number;
   nombre: string;
   apellido: string | null;
   email: string;
-  activo: boolean | number; // Puede ser boolean o 0/1 desde la API
+  activo: boolean | number;
   fecha_creacion: string;
 }
 
@@ -58,7 +59,7 @@ export default function AdminUsersPage() {
       if (!adminUser || !token) {
         router.push('/login');
       } else if (!hasRole('administrador')) {
-        setPageLoading(false); 
+        setPageLoading(false);
       } else {
         fetchUsers();
       }
@@ -124,8 +125,6 @@ export default function AdminUsersPage() {
     );
   }
 
-  // Si no está autenticado (después de que authLoading es false), useEffect ya debería haber redirigido.
-  // Este es un fallback o para el breve momento antes de la redirección.
   if (!authLoading && (!adminUser || !token)) {
     return (
       <MainLayout pageTitle="Redirigiendo">
@@ -136,7 +135,6 @@ export default function AdminUsersPage() {
     );
   }
 
-  // Si está autenticado PERO no tiene el rol de administrador (después de que authLoading es false)
   if (!authLoading && adminUser && !hasRole('administrador')) {
     return (
       <MainLayout pageTitle="Acceso Denegado">
@@ -156,7 +154,6 @@ export default function AdminUsersPage() {
     );
   }
 
-  // Si el usuario es administrador y los datos se cargaron (o hubo un error de fetch)
   return (
     <MainLayout pageTitle="Gestión de Usuarios">
       <div className="bg-gray-800 p-4 sm:p-6 rounded-lg shadow-xl">
@@ -204,10 +201,18 @@ export default function AdminUsersPage() {
                         disabled={actionLoading[userItem.id] || adminUser?.id === userItem.id}
                         className={`px-3 py-1 text-xs rounded-md transition-colors duration-150 ease-in-out
                           ${Boolean(userItem.activo) ? 'bg-yellow-600 hover:bg-yellow-700' : 'bg-green-600 hover:bg-green-700'}
-                          text-white disabled:opacity-50 disabled:cursor-not-allowed`}
+                          text-white disabled:opacity-50 disabled:cursor-not-allowed mr-2`} // Añadido mr-2 para espaciado
                       >
                         {actionLoading[userItem.id] ? 'Carg...' : (Boolean(userItem.activo) ? 'Desactivar' : 'Activar')}
                       </button>
+                      {/* CAMBIO: Enlace para Editar Usuario */}
+                      <Link
+                        href={`/admin/users/${userItem.id}/edit`}
+                        className="text-indigo-400 hover:text-indigo-300 hover:underline"
+                      >
+                        Editar Roles
+                      </Link>
+                      {/* Podríamos añadir un botón de eliminar más adelante */}
                     </td>
                   </tr>
                 ))
