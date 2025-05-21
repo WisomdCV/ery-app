@@ -4,28 +4,26 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { useRouter } from 'next/navigation';
 
-// Interfaz para el objeto de usuario
+// Interfaz para el objeto de usuario, ahora incluye roles
 interface User {
   id: number;
   nombre: string;
   email: string;
-  // Puedes añadir más campos del usuario aquí si los necesitas globalmente
-  // Por ejemplo, roles o permisos, una vez que los implementemos
+  roles: string[]; // Array de strings para los nombres de los roles
 }
 
 // Interfaz para el valor del contexto de autenticación
 interface AuthContextType {
   user: User | null;
   token: string | null;
-  isLoading: boolean; // Para saber si se está cargando el estado inicial de auth
-  login: (userData: User, authToken: string) => void;
+  isLoading: boolean;
+  login: (userData: User, authToken: string) => void; // userData ahora debe incluir roles
   logout: () => void;
+  hasRole: (roleName: string) => boolean; // Nueva función para verificar roles
 }
 
-// Crear el contexto con un valor por defecto undefined para forzar el uso del Provider
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-// Props para el AuthProvider
 interface AuthProviderProps {
   children: ReactNode;
 }
@@ -33,39 +31,35 @@ interface AuthProviderProps {
 export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
   const [token, setToken] = useState<string | null>(null);
-  const [isLoading, setIsLoading] = useState(true); // Inicia como true para cargar el estado inicial
+  const [isLoading, setIsLoading] = useState(true);
   const router = useRouter();
 
-  // Efecto para cargar el estado de autenticación desde localStorage al iniciar la app
   useEffect(() => {
     try {
       const storedToken = localStorage.getItem('authToken');
       const storedUserData = localStorage.getItem('userData');
 
       if (storedToken && storedUserData) {
-        const parsedUser = JSON.parse(storedUserData) as User;
-        // TODO: Aquí podrías añadir una verificación del token con el backend
-        // para asegurar que no haya expirado o sido invalidado.
-        // Por ahora, simplemente lo cargamos.
+        const parsedUser = JSON.parse(storedUserData) as User; // Asegurarse que el parseo incluya roles
+        // Aquí se podría añadir una verificación del token con el backend
         setUser(parsedUser);
         setToken(storedToken);
       }
     } catch (error) {
       console.error("Error al cargar datos de autenticación desde localStorage:", error);
-      // Si hay error (ej. JSON malformado), limpiar para evitar problemas
       localStorage.removeItem('authToken');
       localStorage.removeItem('userData');
     } finally {
-      setIsLoading(false); // Termina la carga inicial
+      setIsLoading(false);
     }
   }, []);
 
   const login = (userData: User, authToken: string) => {
+    // userData que llega desde la API de login ya debería incluir el array de roles
     setUser(userData);
     setToken(authToken);
     localStorage.setItem('authToken', authToken);
-    localStorage.setItem('userData', JSON.stringify(userData));
-    // La redirección se maneja en la página de login, pero podrías centralizarla aquí si prefieres
+    localStorage.setItem('userData', JSON.stringify(userData)); // Guardar userData completo, incluyendo roles
   };
 
   const logout = () => {
@@ -73,8 +67,12 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     setToken(null);
     localStorage.removeItem('authToken');
     localStorage.removeItem('userData');
-    // Redirigir al usuario a la página de login o a la home
     router.push('/login');
+  };
+
+  // Nueva función para verificar si el usuario tiene un rol específico
+  const hasRole = (roleName: string): boolean => {
+    return user?.roles?.includes(roleName) || false;
   };
 
   const contextValue: AuthContextType = {
@@ -83,6 +81,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     isLoading,
     login,
     logout,
+    hasRole, // Añadir la nueva función al valor del contexto
   };
 
   return (
@@ -92,7 +91,6 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   );
 };
 
-// Hook personalizado para usar el AuthContext
 export const useAuth = (): AuthContextType => {
   const context = useContext(AuthContext);
   if (context === undefined) {
