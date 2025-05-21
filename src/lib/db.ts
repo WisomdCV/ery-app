@@ -17,7 +17,7 @@ interface DbConfig {
 // Configura los detalles de la conexión usando variables de entorno
 const dbConfig: DbConfig = {
   host: process.env.DB_HOST,
-  port: process.env.DB_PORT ? parseInt(process.env.DB_PORT, 10) : 3307,
+  port: process.env.DB_PORT ? parseInt(process.env.DB_PORT, 10) : 3306,
   user: process.env.DB_USER,
   password: process.env.DB_PASSWORD,
   database: process.env.DB_NAME,
@@ -35,12 +35,10 @@ function getPool(): Pool {
       pool = mysql.createPool(dbConfig);
       console.log('MySQL Connection Pool created successfully.');
 
-      // Nota: mysql2/promise Pool no soporta el evento 'error'.
-      // Si necesitas manejar errores de conexión, hazlo en los catch de las consultas.
+      // Nota: mysql2/promise Pool no soporta el evento 'error' directamente en el pool object como en `mysql`.
+      // Los errores de conexión individuales se manejan en los catch de las consultas.
     } catch (error) {
       console.error('Failed to create MySQL Connection Pool:', error);
-      // Si la creación del pool falla, es un error crítico.
-      // Podrías lanzar el error para detener la aplicación o manejarlo de otra forma.
       throw error;
     }
   }
@@ -48,27 +46,27 @@ function getPool(): Pool {
 }
 
 // Hacemos la función query más genérica con tipos
-// T es el tipo esperado para las filas de resultados (SELECT)
-// U es el tipo esperado para los resultados de operaciones (INSERT, UPDATE, DELETE) que suelen ser OkPacket o ResultSetHeader
 export async function query<T extends RowDataPacket[] | RowDataPacket[][] | OkPacket | OkPacket[] | ResultSetHeader>(
   sql: string,
-  params?: any[] | object
+  // Corregido: params puede ser un array de primitivas o un objeto para sentencias preparadas
+  params?: (string | number | boolean | null)[] | Record<string, unknown> | undefined
 ): Promise<T> {
-  const currentPool = getPool(); // Esto asegura que el pool se cree si no existe
-  let connection;
+  const currentPool = getPool();
+  // Corregido: La variable 'connection' no se usaba y ha sido eliminada.
   try {
-    // Es buena práctica obtener una conexión del pool para cada consulta
-    // y liberarla después, aunque `pool.execute` también lo maneja internamente.
-    // Para mayor control o transacciones, `pool.getConnection()` es útil.
-    // Para simplicidad aquí, `currentPool.execute` es suficiente.
     const [results] = await currentPool.execute<T>(sql, params);
     return results;
-  } catch (error: any) {
-    console.error('Error executing query:', { sql, params, errorMessage: error.message, errorCode: error.code });
-    // Podrías querer lanzar un error más específico o manejarlo de otra forma
-    // Es importante no exponer detalles sensibles del error al cliente en producción.
-    throw new Error(`Database query failed. SQLState: ${error.sqlState}, Code: ${error.code}`);
+  } catch (error) { // Corregido: Usar 'unknown' para el tipo de error y luego verificarlo si es necesario
+    // Para el log, podemos acceder a 'message' y 'code' si asumimos que es un error de MySQL o similar.
+    // Para mayor seguridad, se podría hacer una verificación de tipo: if (error instanceof Error)
+    const typedError = error as { message?: string; code?: string; sqlState?: string };
+    console.error('Error executing query:', {
+        sql,
+        params,
+        errorMessage: typedError.message,
+        errorCode: typedError.code,
+        sqlState: typedError.sqlState
+    });
+    throw new Error(`Database query failed. SQLState: ${typedError.sqlState}, Code: ${typedError.code}`);
   }
-  // No cerramos la conexión aquí porque el pool la gestiona.
-  // Si usaras `pool.getConnection()`, necesitarías `connection.release()` en un bloque finally.
 }

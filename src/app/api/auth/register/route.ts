@@ -1,6 +1,6 @@
 // src/app/api/auth/register/route.ts
 import { NextRequest, NextResponse } from 'next/server';
-import { query } from '@/lib/db'; 
+import { query } from '@/lib/db';
 import bcrypt from 'bcryptjs';
 import { RowDataPacket, ResultSetHeader } from 'mysql2'; // Tipos específicos de mysql2
 
@@ -22,11 +22,7 @@ interface ExistingUser extends RowDataPacket {
   id: number;
 }
 
-// Interfaz para el resultado de la inserción
-// ResultSetHeader es más apropiado para INSERT, UPDATE, DELETE
-// OkPacket es un alias más antiguo pero ResultSetHeader es más descriptivo
-interface InsertResult extends ResultSetHeader {}
-
+// Ya no se necesita 'InsertResult' si es idéntica a ResultSetHeader, se usa directamente.
 
 export async function POST(request: NextRequest) {
   try {
@@ -43,7 +39,6 @@ export async function POST(request: NextRequest) {
       pais
     } = body;
 
-    // Validación básica de entrada (puedes expandirla mucho más con librerías como Zod o Yup)
     if (!nombre || !email || !password) {
       return NextResponse.json({ message: 'Nombre, email y contraseña son requeridos.' }, { status: 400 });
     }
@@ -51,17 +46,14 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ message: 'La contraseña debe tener al menos 6 caracteres.' }, { status: 400 });
     }
 
-    // Verificar si el usuario ya existe
     const existingUserResults = await query<ExistingUser[]>('SELECT id FROM usuarios WHERE email = ?', [email]);
     if (existingUserResults.length > 0) {
       return NextResponse.json({ message: 'El correo electrónico ya está registrado.' }, { status: 409 }); // 409 Conflict
     }
 
-    // Hashear la contraseña
     const salt = await bcrypt.genSalt(10);
     const password_hash = await bcrypt.hash(password, salt);
 
-    // Insertar el nuevo usuario en la base de datos
     const sqlInsert = `
       INSERT INTO usuarios (nombre, apellido, email, password_hash, fecha_nacimiento, telefono, direccion, ciudad, pais, activo)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -79,7 +71,8 @@ export async function POST(request: NextRequest) {
       true // Por defecto, el usuario está activo
     ];
 
-    const result = await query<InsertResult>(sqlInsert, paramsInsert);
+    // Corregido: Usar ResultSetHeader directamente para el tipo del resultado de la inserción
+    const result = await query<ResultSetHeader>(sqlInsert, paramsInsert);
 
     if (result.affectedRows === 1 && result.insertId) {
       const newUser = {
@@ -94,14 +87,15 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ message: 'Error al registrar el usuario.' }, { status: 500 });
     }
 
-  } catch (error: any) {
-    console.error('Error en /api/auth/register:', error);
+  } catch (error) { // Corregido: Usar 'unknown' para el tipo de error
+    const typedError = error as { message?: string; code?: string; sqlState?: string }; // Asertar tipo para acceder a propiedades
+    console.error('Error en /api/auth/register:', typedError);
     // Verifica si el error es por un campo UNIQUE duplicado (aunque ya lo chequeamos antes)
     // El código de error ER_DUP_ENTRY es específico de MySQL
-    if (error.message.includes('ER_DUP_ENTRY') || (error.code === 'ER_DUP_ENTRY')) {
+    if (typedError.code === 'ER_DUP_ENTRY' || (typedError.message && typedError.message.includes('ER_DUP_ENTRY'))) {
         return NextResponse.json({ message: 'El correo electrónico ya está registrado (error de BD).' }, { status: 409 });
     }
     // Manejo de otros errores de base de datos o errores inesperados
-    return NextResponse.json({ message: 'Error interno del servidor.', errorDetails: error.message }, { status: 500 });
+    return NextResponse.json({ message: 'Error interno del servidor.', errorDetails: typedError.message }, { status: 500 });
   }
 }

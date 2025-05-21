@@ -33,8 +33,6 @@ export async function POST(request: NextRequest) {
     }
 
     // Buscar usuario por email
-    // Seleccionamos los campos necesarios, incluyendo el password_hash para la comparación
-    // y 'activo' para verificar si la cuenta está habilitada.
     const userResults = await query<UserFromDB[]>(
       'SELECT id, email, nombre, password_hash, activo FROM usuarios WHERE email = ?',
       [email]
@@ -65,15 +63,10 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ message: 'Error de configuración del servidor.' }, { status: 500 });
     }
 
-    // El payload del token. Incluye información que quieras que esté disponible
-    // de forma segura en el frontend o para verificar en otras API routes.
-    // NO incluyas información sensible como la contraseña.
     const tokenPayload = {
       userId: user.id,
       email: user.email,
       nombre: user.nombre,
-      // Aquí podrías añadir roles/permisos si ya los estuvieras cargando
-      // Ejemplo: roles: ['usuario'] (esto lo implementaremos más adelante)
     };
 
     // Generar el token. Define un tiempo de expiración.
@@ -89,22 +82,14 @@ export async function POST(request: NextRequest) {
         email: user.email,
         nombre: user.nombre,
       },
-      token, // Devuelve el token en el cuerpo de la respuesta
+      token,
     }, { status: 200 });
-
-    // Opcional: Configurar el token en una cookie HttpOnly para mayor seguridad (recomendado para web)
-    // response.cookies.set('token', token, {
-    //   httpOnly: true, // El cliente JavaScript no puede acceder a la cookie
-    //   secure: process.env.NODE_ENV === 'production', // Solo enviar sobre HTTPS en producción
-    //   sameSite: 'strict', // Mitiga ataques CSRF
-    //   maxAge: 60 * 60, // 1 hora en segundos (debe coincidir con expiresIn o ser gestionado)
-    //   path: '/', // Disponible en todo el sitio
-    // });
 
     return response;
 
-  } catch (error: any) {
-    console.error('Error en /api/auth/login:', error);
-    return NextResponse.json({ message: 'Error interno del servidor.', errorDetails: error.message }, { status: 500 });
+  } catch (error) { // Corregido: Usar 'unknown' para el tipo de error
+    const typedError = error as { message?: string; code?: string; sqlState?: string }; // Asertar tipo para acceder a propiedades
+    console.error('Error en /api/auth/login:', typedError);
+    return NextResponse.json({ message: 'Error interno del servidor.', errorDetails: typedError.message }, { status: 500 });
   }
 }
