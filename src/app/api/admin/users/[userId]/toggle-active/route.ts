@@ -5,33 +5,33 @@ import { query } from '@/lib/db';
 import { ResultSetHeader } from 'mysql2';
 
 interface ToggleActiveRequestBody {
-  activo: boolean; // El nuevo estado deseado para 'activo'
+  activo: boolean;
 }
 
-// El primer parámetro 'request' es obligatorio, incluso si no se usa directamente en este GET de ejemplo.
-// El segundo parámetro 'params' contendrá los parámetros de la ruta dinámica.
-interface RouteParams {
+// Interfaz para los parámetros de la ruta dinámica
+interface RouteContext {
   params: {
     userId: string;
   };
 }
 
-export async function PUT(request: NextRequest, { params }: RouteParams) {
+export async function PUT(request: NextRequest, context: RouteContext) { // Renombrado el segundo parámetro a 'context'
   const { user: adminUser, errorResponse: authError } = await verifyAuth(request, ['administrador']);
 
   if (authError) {
     return authError;
   }
 
-  const { userId } = params;
+  // Acceder a userId desde context.params
+  const { userId } = context.params;
   const numericUserId = parseInt(userId, 10);
 
   if (isNaN(numericUserId)) {
-    return NextResponse.json({ message: 'ID de usuario inválido.' }, { status: 400 });
+    // Este es el error que estás viendo en Postman, lo que significa que userId no se está parseando correctamente.
+    console.error(`ID de usuario inválido recibido en la ruta: ${userId}`);
+    return NextResponse.json({ message: 'ID de usuario inválido en la ruta.' }, { status: 400 });
   }
 
-  // No permitir que un administrador se desactive a sí mismo a través de esta ruta
-  // Podrían tener otra forma de gestionar su propia cuenta si es necesario.
   if (adminUser?.userId === numericUserId) {
     return NextResponse.json({ message: 'Un administrador no puede cambiar su propio estado activo a través de esta interfaz.' }, { status: 403 });
   }
@@ -41,10 +41,9 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
     const { activo } = body;
 
     if (typeof activo !== 'boolean') {
-      return NextResponse.json({ message: 'El campo "activo" debe ser un valor booleano.' }, { status: 400 });
+      return NextResponse.json({ message: 'El campo "activo" debe ser un valor booleano en el cuerpo de la solicitud.' }, { status: 400 });
     }
 
-    // Actualizar el estado 'activo' del usuario en la base de datos
     const result = await query<ResultSetHeader>(
       'UPDATE usuarios SET activo = ? WHERE id = ?',
       [activo, numericUserId]
@@ -62,8 +61,7 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
   } catch (error) {
     const typedError = error as { message?: string; code?: string; sqlState?: string };
     console.error(`Error al actualizar estado activo del usuario ID ${numericUserId}:`, typedError);
-    // Si el error es porque el JSON está malformado
-    if (error instanceof SyntaxError) {
+    if (error instanceof SyntaxError) { // Error al parsear el JSON del body
         return NextResponse.json({ message: 'Cuerpo de la solicitud JSON malformado.' }, { status: 400 });
     }
     return NextResponse.json(
