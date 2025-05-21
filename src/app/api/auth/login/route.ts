@@ -12,14 +12,17 @@ interface LoginRequestBody {
 }
 
 // Interfaz para los datos del usuario que recuperamos de la BD
-// Asegúrate de que coincida con las columnas que seleccionas
 interface UserFromDB extends RowDataPacket {
   id: number;
   email: string;
   password_hash: string;
   nombre: string;
   activo: boolean;
-  // Puedes añadir más campos si los necesitas en el token o para validaciones
+}
+
+// Interfaz para los roles recuperados de la BD
+interface UserRole extends RowDataPacket {
+  nombre_rol: string;
 }
 
 export async function POST(request: NextRequest) {
@@ -27,34 +30,41 @@ export async function POST(request: NextRequest) {
     const body = await request.json() as LoginRequestBody;
     const { email, password } = body;
 
-    // Validación básica de entrada
     if (!email || !password) {
       return NextResponse.json({ message: 'Email y contraseña son requeridos.' }, { status: 400 });
     }
 
-    // Buscar usuario por email
     const userResults = await query<UserFromDB[]>(
       'SELECT id, email, nombre, password_hash, activo FROM usuarios WHERE email = ?',
       [email]
     );
 
     if (userResults.length === 0) {
-      return NextResponse.json({ message: 'Credenciales inválidas. Usuario no encontrado.' }, { status: 401 }); // Unauthorized
+      return NextResponse.json({ message: 'Credenciales inválidas. Usuario no encontrado.' }, { status: 401 });
     }
 
     const user = userResults[0];
 
-    // Verificar si la cuenta está activa
     if (!user.activo) {
-        return NextResponse.json({ message: 'Esta cuenta ha sido desactivada.' }, { status: 403 }); // Forbidden
+        return NextResponse.json({ message: 'Esta cuenta ha sido desactivada.' }, { status: 403 });
     }
 
-    // Comparar la contraseña proporcionada con el hash almacenado
     const isPasswordMatch = await bcrypt.compare(password, user.password_hash);
 
     if (!isPasswordMatch) {
-      return NextResponse.json({ message: 'Credenciales inválidas. Contraseña incorrecta.' }, { status: 401 }); // Unauthorized
+      return NextResponse.json({ message: 'Credenciales inválidas. Contraseña incorrecta.' }, { status: 401 });
     }
+
+    // Obtener los roles del usuario
+    const rolesResults = await query<UserRole[]>(
+      `SELECT r.nombre_rol
+       FROM roles r
+       JOIN usuario_roles ur ON r.id = ur.rol_id
+       WHERE ur.usuario_id = ?`,
+      [user.id]
+    );
+
+    const roles = rolesResults.map(role => role.nombre_rol);
 
     // Si las credenciales son correctas, generar un JWT
     const jwtSecret = process.env.JWT_SECRET;
@@ -67,28 +77,28 @@ export async function POST(request: NextRequest) {
       userId: user.id,
       email: user.email,
       nombre: user.nombre,
+      roles: roles, // Incluir los roles en el payload del token
     };
 
-    // Generar el token. Define un tiempo de expiración.
     const token = jwt.sign(tokenPayload, jwtSecret, {
-      expiresIn: '1h', // Por ejemplo, 1 hora. Puedes usar '7d', '30m', etc.
+      expiresIn: '1h', // Por ejemplo, 1 hora
     });
 
-    // Crear la respuesta
     const response = NextResponse.json({
       message: 'Inicio de sesión exitoso.',
-      user: { // Devuelve solo la información no sensible del usuario
+      user: {
         id: user.id,
         email: user.email,
         nombre: user.nombre,
+        roles: roles, // También devolver los roles en la respuesta del usuario si es útil para el frontend inmediatamente
       },
       token,
     }, { status: 200 });
 
     return response;
 
-  } catch (error) { // Corregido: Usar 'unknown' para el tipo de error
-    const typedError = error as { message?: string; code?: string; sqlState?: string }; // Asertar tipo para acceder a propiedades
+  } catch (error) {
+    const typedError = error as { message?: string; code?: string; sqlState?: string };
     console.error('Error en /api/auth/login:', typedError);
     return NextResponse.json({ message: 'Error interno del servidor.', errorDetails: typedError.message }, { status: 500 });
   }
