@@ -1,6 +1,7 @@
+```typescript
 // src/app/api/auth/login/route.ts
 import { NextRequest, NextResponse } from 'next/server';
-import { query } from '@/lib/db';
+import { query, DatabaseConnectionError } from '@/lib/db'; // Import DatabaseConnectionError
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { RowDataPacket } from 'mysql2';
@@ -97,9 +98,13 @@ export async function POST(request: NextRequest) {
 
     return response;
 
-  } catch (error) {
-    const typedError = error as { message?: string; code?: string; sqlState?: string };
-    console.error('Error en /api/auth/login:', typedError);
-    return NextResponse.json({ message: 'Error interno del servidor.', errorDetails: typedError.message }, { status: 500 });
+  } catch (error: any) {
+    console.error('Error en /api/auth/login:', error);
+    if (error instanceof DatabaseConnectionError) {
+      return NextResponse.json({ message: 'Servicio no disponible temporalmente debido a problemas con la base de datos.', code: "DB_UNAVAILABLE" }, { status: 503 });
+    }
+    // Manejo de otros errores de base de datos o errores inesperados
+    return NextResponse.json({ message: 'Error interno del servidor.', errorDetails: error.message }, { status: 500 });
   }
 }
+```

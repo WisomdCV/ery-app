@@ -1,6 +1,8 @@
+```typescript
 // src/lib/apiAuthUtils.ts
 import { NextRequest, NextResponse } from 'next/server';
 import jwt, { JwtPayload } from 'jsonwebtoken';
+import { query, DatabaseConnectionError } from '@/lib/db'; // Ensure DatabaseConnectionError is imported
 
 interface DecodedToken extends JwtPayload {
   userId: number;
@@ -31,7 +33,7 @@ export async function verifyAuth(
   if (!authHeader) {
     return {
       user: null,
-      errorResponse: NextResponse.json({ message: 'Token de autorización no proporcionado.' }, { status: 401 }),
+      errorResponse: NextResponse.json({ message: 'Token no proporcionado' }, { status: 401 }),
     };
   }
 
@@ -39,7 +41,7 @@ export async function verifyAuth(
   if (tokenParts.length !== 2 || tokenParts[0].toLowerCase() !== 'bearer' || !tokenParts[1]) {
     return {
       user: null,
-      errorResponse: NextResponse.json({ message: 'Formato de token inválido. Se esperaba "Bearer <token>".' }, { status: 401 }),
+      errorResponse: NextResponse.json({ message: 'Formato de token inválido.' }, { status: 401 }),
     };
   }
 
@@ -48,47 +50,50 @@ export async function verifyAuth(
 
   if (!jwtSecret) {
     console.error('JWT_SECRET no está definido en las variables de entorno.');
+    // Return a 500 error as this is a server configuration issue.
     return {
       user: null,
       errorResponse: NextResponse.json({ message: 'Error de configuración del servidor (JWT Secret).' }, { status: 500 }),
     };
   }
 
+  let decoded: DecodedToken;
   try {
-    const decoded = jwt.verify(token, jwtSecret) as DecodedToken;
-
-    // Verificar si se requieren roles específicos
-    if (requiredRoles.length > 0) {
-      const userHasRequiredRole = decoded.roles && decoded.roles.some(userRole => requiredRoles.includes(userRole));
-      if (!userHasRequiredRole) {
-        return {
-          user: null,
-          errorResponse: NextResponse.json(
-            { message: `Acceso denegado. Se requiere uno de los siguientes roles: ${requiredRoles.join(', ')}.` },
-            { status: 403 }
-          ),
-        };
-      }
-    }
-
-    // Autenticación y autorización (si se requirió) exitosas
-    return { user: decoded, errorResponse: null };
-
+    decoded = jwt.verify(token, jwtSecret) as DecodedToken;
   } catch (error) {
-    let errorMessage = 'Token inválido o expirado.';
-    let statusCode = 401; // No autorizado por token inválido
+    let errorMessage = 'Token inválido.';
+    let statusCode = 401; // Unauthorized
 
     if (error instanceof jwt.TokenExpiredError) {
       errorMessage = 'El token ha expirado.';
-      statusCode = 401; // O 403 si prefieres para expirado
     } else if (error instanceof jwt.JsonWebTokenError) {
-      errorMessage = 'Token inválido.';
+      // message is already 'Token inválido.'
     } else {
-      // Otros errores inesperados durante la verificación del token
+      // Catch any other unexpected errors during token verification
       console.error('Error inesperado al verificar el token:', error);
       errorMessage = 'Error al procesar el token.';
-      statusCode = 500; // Error interno del servidor
+      statusCode = 500; // Internal Server Error
     }
     return { user: null, errorResponse: NextResponse.json({ message: errorMessage }, { status: statusCode }) };
   }
+
+  // If we reach here, the token is valid. Now check roles if required.
+  // This part assumes roles are embedded in the token. If roles were fetched from DB,
+  // DatabaseConnectionError would need to be handled here or propagated.
+  if (requiredRoles.length > 0) {
+    const userRoles = decoded.roles || []; // Ensure roles is an array
+    const hasRequiredRole = userRoles.some(userRole => requiredRoles.includes(userRole));
+    if (!hasRequiredRole) {
+      return {
+        user: null,
+        errorResponse: NextResponse.json(
+          { message: `Acceso denegado. Se requiere uno de los siguientes roles: ${requiredRoles.join(', ')}.` },
+          { status: 403 }
+        ),
+      };
+    }
+  }
+
+  return { user: decoded, errorResponse: null };
 }
+```
