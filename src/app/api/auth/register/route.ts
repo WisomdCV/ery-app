@@ -1,28 +1,31 @@
+```typescript
 // src/app/api/auth/register/route.ts
 import { NextRequest, NextResponse } from 'next/server';
-import { query } from '@/lib/db';
+import { query, DatabaseConnectionError } from '@/lib/db'; // Import DatabaseConnectionError
 import bcrypt from 'bcryptjs';
-import { RowDataPacket, ResultSetHeader } from 'mysql2'; // Tipos específicos de mysql2
+import { RowDataPacket, ResultSetHeader } from 'mysql2';
 
-// Interfaz para el cuerpo de la solicitud (request body)
+// Basic email validation regex
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
 interface RegisterRequestBody {
   nombre: string;
   apellido?: string;
   email: string;
   password: string;
-  fecha_nacimiento?: string; // Formato YYYY-MM-DD
+  fecha_nacimiento?: string;
   telefono?: string;
   direccion?: string;
   ciudad?: string;
   pais?: string;
 }
 
-// Interfaz para el usuario existente (para la verificación)
-interface ExistingUser extends RowDataPacket {
+interface User extends RowDataPacket {
   id: number;
+  nombre: string;
+  email: string;
+  // password_hash should not be returned
 }
-
-// Ya no se necesita 'InsertResult' si es idéntica a ResultSetHeader, se usa directamente.
 
 export async function POST(request: NextRequest) {
   try {
@@ -42,13 +45,18 @@ export async function POST(request: NextRequest) {
     if (!nombre || !email || !password) {
       return NextResponse.json({ message: 'Nombre, email y contraseña son requeridos.' }, { status: 400 });
     }
-    if (password.length < 6) { // Ejemplo de validación adicional
+
+    if (!EMAIL_REGEX.test(email)) {
+      return NextResponse.json({ message: 'Formato de email inválido.' }, { status: 400 });
+    }
+    
+    if (password.length < 6) {
         return NextResponse.json({ message: 'La contraseña debe tener al menos 6 caracteres.' }, { status: 400 });
     }
 
-    const existingUserResults = await query<ExistingUser[]>('SELECT id FROM usuarios WHERE email = ?', [email]);
-    if (existingUserResults.length > 0) {
-      return NextResponse.json({ message: 'El correo electrónico ya está registrado.' }, { status: 409 }); // 409 Conflict
+    const existingUser = await query<User[]>('SELECT id FROM usuarios WHERE email = ?', [email]);
+    if (existingUser.length > 0) {
+      return NextResponse.json({ message: 'El correo electrónico ya está registrado.' }, { status: 409 });
     }
 
     const salt = await bcrypt.genSalt(10);
@@ -71,15 +79,13 @@ export async function POST(request: NextRequest) {
       true // Por defecto, el usuario está activo
     ];
 
-    // Corregido: Usar ResultSetHeader directamente para el tipo del resultado de la inserción
     const result = await query<ResultSetHeader>(sqlInsert, paramsInsert);
 
     if (result.affectedRows === 1 && result.insertId) {
-      const newUser = {
+      const newUser: Partial<User> = { // Use Partial<User> since password_hash is omitted
         id: result.insertId,
         nombre,
         email,
-        // No devuelvas el hash de la contraseña ni otros datos sensibles
       };
       return NextResponse.json({ message: 'Usuario registrado exitosamente.', user: newUser }, { status: 201 });
     } else {
@@ -87,15 +93,17 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ message: 'Error al registrar el usuario.' }, { status: 500 });
     }
 
-  } catch (error) { // Corregido: Usar 'unknown' para el tipo de error
-    const typedError = error as { message?: string; code?: string; sqlState?: string }; // Asertar tipo para acceder a propiedades
-    console.error('Error en /api/auth/register:', typedError);
-    // Verifica si el error es por un campo UNIQUE duplicado (aunque ya lo chequeamos antes)
-    // El código de error ER_DUP_ENTRY es específico de MySQL
-    if (typedError.code === 'ER_DUP_ENTRY' || (typedError.message && typedError.message.includes('ER_DUP_ENTRY'))) {
-        return NextResponse.json({ message: 'El correo electrónico ya está registrado (error de BD).' }, { status: 409 });
+  } catch (error: any) {
+    console.error('Error en /api/auth/register:', error);
+    if (error instanceof DatabaseConnectionError) {
+      return NextResponse.json({ message: 'Servicio no disponible temporalmente debido a problemas con la base de datos.', code: "DB_UNAVAILABLE" }, { status: 503 });
     }
-    // Manejo de otros errores de base de datos o errores inesperados
-    return NextResponse.json({ message: 'Error interno del servidor.', errorDetails: typedError.message }, { status: 500 });
+    // Catch specific MySQL error for duplicate entry if the initial check missed it (race condition, though unlikely with proper transactions)
+    if (error.code === 'ER_DUP_ENTRY') {
+        return NextResponse.json({ message: 'El correo electrónico ya está registrado (error de BD).', code: 'EMAIL_EXISTS' }, { status: 409 });
+    }
+    // Generic error for other cases
+    return NextResponse.json({ message: 'Error interno del servidor.', errorDetails: error.message }, { status: 500 });
   }
 }
+```
