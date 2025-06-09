@@ -7,7 +7,7 @@ import { useSession } from 'next-auth/react'; // 1. Importar useSession de NextA
 import MainLayout from '@/components/MainLayout';
 import Link from 'next/link';
 
-export default function DashboardPage() {
+export default function DashboardPage() { 
   // 2. Usar useSession en lugar de useAuth
   const { data: session, status } = useSession();
   const router = useRouter();
