@@ -3,7 +3,7 @@
 
 import React, { useEffect, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
-import { useAuth } from '@/context/AuthContext';
+import { useSession } from 'next-auth/react'; // 1. Importar useSession
 import MainLayout from '@/components/MainLayout';
 import Link from 'next/link';
 
@@ -12,12 +12,13 @@ interface UserFromApi {
   nombre: string;
   apellido: string | null;
   email: string;
-  activo: boolean | number; // Puede ser boolean o 0/1 desde la API
+  activo: boolean | number;
   fecha_creacion: string;
+  roles: string[];
 }
 
 export default function AdminUsersPage() {
-  const { user: adminUser, isLoading: authLoading, token, hasRole } = useAuth();
+  const { data: session, status } = useSession(); // 2. Usar useSession
   const router = useRouter();
 
   const [users, setUsers] = useState<UserFromApi[]>([]);
@@ -26,18 +27,11 @@ export default function AdminUsersPage() {
   const [actionLoading, setActionLoading] = useState<Record<number, boolean>>({});
 
   const fetchUsers = useCallback(async () => {
-    if (!token || !hasRole('administrador')) {
-      setPageLoading(false);
-      return;
-    }
     setPageLoading(true);
     setFetchError(null);
     try {
-      const response = await fetch('/api/admin/users', {
-        headers: {
-          'Authorization': `Bearer ${token}`,
-        },
-      });
+      // 3. La llamada a la API ahora es protegida por la cookie de sesión de NextAuth
+      const response = await fetch('/api/admin/users');
 
       if (!response.ok) {
         const errorData = await response.json();
@@ -52,40 +46,37 @@ export default function AdminUsersPage() {
     } finally {
       setPageLoading(false);
     }
-  }, [token, hasRole]);
+  }, []);
 
+  // 4. useEffect actualizado para usar el estado de NextAuth
   useEffect(() => {
-    if (!authLoading) {
-      if (!adminUser || !token) {
-        router.push('/login');
-      } else if (!hasRole('administrador')) {
-        setPageLoading(false);
-      } else {
+    if (status === 'loading') {
+      return; // No hacer nada mientras la sesión carga
+    }
+    if (status === 'unauthenticated') {
+      router.push('/login');
+    }
+    if (status === 'authenticated') {
+      // 5. Verificar con el rol correcto 'administrador'
+      if (session?.user?.roles?.includes('administrador')) {
         fetchUsers();
+      } else {
+        setPageLoading(false);
       }
     }
-  }, [adminUser, authLoading, token, router, hasRole, fetchUsers]);
+  }, [status, session, router, fetchUsers]);
 
   const handleToggleActive = async (userId: number, currentIsActive: boolean) => {
-    if (!token) {
-      setFetchError("No autenticado para realizar esta acción.");
-      return;
-    }
-    if (adminUser?.id === userId) {
+    if (session?.user?.id === userId) {
         alert("Un administrador no puede cambiar su propio estado activo a través de esta interfaz.");
         return;
     }
-
     setActionLoading(prev => ({ ...prev, [userId]: true }));
     setFetchError(null);
-
     try {
       const response = await fetch(`/api/admin/users/${userId}/toggle-active`, {
         method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`,
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ activo: !currentIsActive }),
       });
 
@@ -93,16 +84,13 @@ export default function AdminUsersPage() {
         const errorData = await response.json();
         throw new Error(errorData.message || `Error ${response.status}: Fallo al actualizar estado`);
       }
-
       setUsers(prevUsers =>
         prevUsers.map(u =>
           u.id === userId ? { ...u, activo: !currentIsActive } : u
         )
       );
       alert(`Usuario ${userId} ha sido ${!currentIsActive ? 'activado' : 'desactivado'}.`);
-
     } catch (err) {
-      console.error(`Error toggling active state for user ${userId}:`, err);
       const errorMessage = err instanceof Error ? err.message : 'Ocurrió un error desconocido al actualizar.';
       setFetchError(errorMessage);
       alert(`Error al actualizar: ${errorMessage}`);
@@ -111,7 +99,8 @@ export default function AdminUsersPage() {
     }
   };
 
-  if (authLoading || (pageLoading && !users.length && !fetchError && hasRole('administrador'))) {
+  // 6. Lógica de renderizado condicional actualizada
+  if (status === 'loading' || pageLoading) {
     return (
       <MainLayout pageTitle="Gestión de Usuarios">
         <div className="flex flex-col items-center justify-center text-center h-full">
@@ -124,31 +113,18 @@ export default function AdminUsersPage() {
       </MainLayout>
     );
   }
-
-  if (!authLoading && (!adminUser || !token)) {
-    return (
-      <MainLayout pageTitle="Redirigiendo">
-        <div className="flex flex-col items-center justify-center text-center h-full">
-          <p>Redirigiendo a inicio de sesión...</p>
-        </div>
-      </MainLayout>
-    );
+  
+  if (status === 'unauthenticated') {
+    return <MainLayout pageTitle="Redirigiendo"><p>Redirigiendo a inicio de sesión...</p></MainLayout>;
   }
 
-  if (!authLoading && adminUser && !hasRole('administrador')) {
+  if (!session?.user?.roles?.includes('administrador')) {
     return (
       <MainLayout pageTitle="Acceso Denegado">
         <div className="flex flex-col items-center justify-center text-center h-full">
           <h1 className="text-4xl font-bold text-red-500 mb-4">Acceso Denegado</h1>
-          <p className="text-xl text-gray-300">
-            No tienes los permisos necesarios para acceder a la gestión de usuarios.
-          </p>
-          <button
-            onClick={() => router.push('/')}
-            className="mt-8 px-6 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-md shadow focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 focus:ring-offset-gray-800"
-          >
-            Volver a la Página Principal
-          </button>
+          <p className="text-xl text-gray-300">No tienes los permisos necesarios.</p>
+          <button onClick={() => router.push('/')} className="mt-8 px-6 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-md shadow focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 focus:ring-offset-gray-800">Volver a Inicio</button>
         </div>
       </MainLayout>
     );
@@ -158,14 +134,12 @@ export default function AdminUsersPage() {
     <MainLayout pageTitle="Gestión de Usuarios">
       <div className="bg-gray-800 p-4 sm:p-6 rounded-lg shadow-xl">
         <h2 className="text-xl sm:text-2xl font-semibold mb-6 text-white">Administrar Usuarios del Sistema</h2>
-        
         {fetchError && (
           <div className="bg-red-700 border border-red-900 text-white px-4 py-3 rounded relative mb-4" role="alert">
             <strong className="font-bold">Error: </strong>
             <span className="block sm:inline">{fetchError}</span>
           </div>
         )}
-
         <div className="overflow-x-auto">
           <table className="min-w-full bg-gray-700 rounded-md">
             <thead className="bg-gray-600">
@@ -192,23 +166,16 @@ export default function AdminUsersPage() {
                         {userItem.activo ? 'Sí' : 'No'}
                       </span>
                     </td>
-                    <td className="px-3 py-4 whitespace-nowrap text-xs sm:text-sm text-gray-400">
-                      {new Date(userItem.fecha_creacion).toLocaleDateString()}
-                    </td>
+                    <td className="px-3 py-4 whitespace-nowrap text-xs sm:text-sm text-gray-400">{new Date(userItem.fecha_creacion).toLocaleDateString()}</td>
                     <td className="px-3 py-4 whitespace-nowrap text-xs sm:text-sm font-medium">
                       <button 
                         onClick={() => handleToggleActive(userItem.id, Boolean(userItem.activo))}
-                        disabled={actionLoading[userItem.id] || adminUser?.id === userItem.id}
-                        className={`px-3 py-1 text-xs rounded-md transition-colors duration-150 ease-in-out
-                          ${Boolean(userItem.activo) ? 'bg-yellow-600 hover:bg-yellow-700' : 'bg-green-600 hover:bg-green-700'}
-                          text-white disabled:opacity-50 disabled:cursor-not-allowed mr-2`}
+                        disabled={actionLoading[userItem.id] || session?.user?.id === userItem.id}
+                        className={`px-3 py-1 text-xs rounded-md transition-colors duration-150 ease-in-out ${Boolean(userItem.activo) ? 'bg-yellow-600 hover:bg-yellow-700' : 'bg-green-600 hover:bg-green-700'} text-white disabled:opacity-50 disabled:cursor-not-allowed mr-2`}
                       >
                         {actionLoading[userItem.id] ? 'Carg...' : (Boolean(userItem.activo) ? 'Desactivar' : 'Activar')}
                       </button>
-                      <Link
-                        href={`/admin/users/${userItem.id}/edit`}
-                        className="text-indigo-400 hover:text-indigo-300 hover:underline"
-                      >
+                      <Link href={`/admin/users/${userItem.id}/edit`} className="text-indigo-400 hover:text-indigo-300 hover:underline">
                         Editar Roles
                       </Link>
                     </td>

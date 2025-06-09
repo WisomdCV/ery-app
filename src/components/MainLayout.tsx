@@ -4,10 +4,9 @@
 import React, { ReactNode, useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { useAuth } from '@/context/AuthContext'; // Nuestro AuthContext
+import { useSession, signOut } from 'next-auth/react'; // 1. Importar useSession y signOut
 
-// Importar algunos iconos (puedes usar una librería como react-icons o SVGs)
-// Ejemplo con SVGs simples (puedes reemplazarlos)
+// --- Iconos (sin cambios) ---
 const HomeIcon = () => (
   <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5 mr-3">
     <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 12l8.954-8.955a1.5 1.5 0 012.122 0l8.954 8.955M2.25 12l8.954 8.955A1.5 1.5 0 0012.63 21V15.75A2.25 2.25 0 0114.88 13.5h0A2.25 2.25 0 0117.13 15.75V21a1.5 1.5 0 001.426-.955L21.75 12M2.25 12h19.5" />
@@ -33,29 +32,27 @@ const LogoutIcon = () => (
     <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 9V5.25A2.25 2.25 0 0013.5 3h-6a2.25 2.25 0 00-2.25 2.25v13.5A2.25 2.25 0 007.5 21h6a2.25 2.25 0 002.25-2.25V15m3 0l3-3m0 0l-3-3m3 3H9" />
   </svg>
 );
-
+// ---
 
 interface MainLayoutProps {
   children: ReactNode;
-  pageTitle?: string; // Título opcional para la cabecera de la página
+  pageTitle?: string;
 }
 
 const MainLayout: React.FC<MainLayoutProps> = ({ children, pageTitle = "Ery App" }) => {
-  const { user, hasRole, logout } = useAuth();
-  const pathname = usePathname(); // Para resaltar el enlace activo
-  const [sidebarOpen, setSidebarOpen] = useState(false); // Para el sidebar en móviles
+  // 2. Usar useSession para obtener la sesión de NextAuth.js
+  const { data: session } = useSession();
+  const user = session?.user;
+  const userRoles = session?.user?.roles || []; // Obtener roles de la sesión, default a array vacío
 
-  // Definición de los enlaces de navegación
-  // Cada objeto puede tener una propiedad 'roles' (array de strings)
-  // Si 'roles' no está definido, el enlace es visible para todos los usuarios autenticados.
-  // Si 'roles' está definido, el usuario debe tener al menos uno de esos roles.
+  const pathname = usePathname();
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  
   const navLinks = [
-    { href: '/', text: 'Inicio', icon: <HomeIcon />, roles: ['administrador', 'usuario_estandar', 'moderador_contenido'] },
-    { href: '/dashboard', text: 'Dashboard Admin', icon: <DashboardIcon />, roles: ['administrador'] },
-    { href: '/admin/users', text: 'Gestión Usuarios', icon: <UsersIcon />, roles: ['administrador'] },
-    { href: '/habits', text: 'Mis Hábitos', icon: <HabitsIcon />, roles: ['usuario_estandar', 'administrador'] },
-    // Añade más enlaces aquí a medida que creas las páginas
-    // { href: '/profile', text: 'Mi Perfil', icon: <ProfileIcon />, roles: ['administrador', 'usuario_estandar'] },
+    { href: '/', text: 'Inicio', icon: <HomeIcon />, roles: ['adminEry', 'usuario_estandar'] },
+    { href: '/dashboard', text: 'Dashboard Admin', icon: <DashboardIcon />, roles: ['adminEry'] },
+    { href: '/admin/users', text: 'Gestión Usuarios', icon: <UsersIcon />, roles: ['adminEry'] },
+    { href: '/habits', text: 'Mis Hábitos', icon: <HabitsIcon />, roles: ['usuario_estandar', 'adminEry'] },
   ];
 
   const isActive = (path: string) => pathname === path;
@@ -70,17 +67,17 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children, pageTitle = "Ery App"
           </Link>
         </div>
         <nav className="mt-6 flex-1">
-          {navLinks.map((link) => {
-            // Verificar si el enlace debe ser visible para el rol del usuario
-            const shouldShowLink = !link.roles || link.roles.some(role => hasRole(role));
-            if (!shouldShowLink) {
-              return null; // No renderizar el enlace si el usuario no tiene el rol requerido
+          {user && navLinks.map((link) => { // Solo mostrar enlaces si el usuario está logueado
+            // 3. Lógica de roles actualizada para usar la sesión de NextAuth.js
+            const hasAccess = !link.roles || link.roles.some(role => userRoles.includes(role));
+            if (!hasAccess) {
+              return null;
             }
             return (
               <Link
                 key={link.text}
                 href={link.href}
-                onClick={() => setSidebarOpen(false)} // Cerrar sidebar en móvil al hacer clic
+                onClick={() => setSidebarOpen(false)}
                 className={`flex items-center px-6 py-3 text-gray-300 hover:bg-gray-700 hover:text-white transition-colors duration-200 ${isActive(link.href) ? 'bg-gray-700 text-white border-l-4 border-indigo-500' : ''}`}
               >
                 {link.icon}
@@ -89,24 +86,26 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children, pageTitle = "Ery App"
             );
           })}
         </nav>
-        {/* Sección de usuario y logout en el sidebar */}
         <div className="absolute bottom-0 w-full border-t border-gray-700 p-4">
           {user && (
             <div className="flex items-center mb-3">
-              {/* Podrías añadir una imagen de perfil aquí si la tienes */}
+              <img src={user.image || `https://ui-avatars.com/api/?name=${user.name || user.email}&background=random`} alt="Avatar" className="w-10 h-10 rounded-full mr-3" />
               <div>
-                <p className="text-sm font-medium">{user.nombre || user.email}</p>
-                <p className="text-xs text-gray-400">{user.roles?.join(', ')}</p>
+                <p className="text-sm font-medium">{user.name || user.email}</p>
+                <p className="text-xs text-gray-400">{userRoles.join(', ')}</p>
               </div>
             </div>
           )}
-          <button
-            onClick={logout}
-            className="w-full flex items-center justify-center px-4 py-2 text-sm font-medium text-red-400 hover:bg-red-600 hover:text-white rounded-md transition-colors duration-200 border border-red-500 hover:border-red-600"
-          >
-            <LogoutIcon />
-            Cerrar Sesión
-          </button>
+          {/* 4. El botón de logout ahora usa signOut de NextAuth.js, solo se muestra si hay sesión */}
+          {user && (
+            <button
+              onClick={() => signOut({ callbackUrl: '/login' })}
+              className="w-full flex items-center justify-center px-4 py-2 text-sm font-medium text-red-400 hover:bg-red-600 hover:text-white rounded-md transition-colors duration-200 border border-red-500 hover:border-red-600"
+            >
+              <LogoutIcon />
+              Cerrar Sesión
+            </button>
+          )}
         </div>
       </aside>
 
@@ -120,10 +119,8 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children, pageTitle = "Ery App"
 
       {/* Contenido Principal */}
       <div className="flex-1 flex flex-col overflow-hidden">
-        {/* Cabecera del contenido principal (opcional) */}
         <header className="bg-gray-800 shadow-md md:shadow-none">
           <div className="flex items-center justify-between px-6 py-4">
-            {/* Botón para abrir sidebar en móviles */}
             <button 
               onClick={() => setSidebarOpen(true)}
               className="text-gray-300 focus:outline-none md:hidden"
@@ -135,15 +132,11 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children, pageTitle = "Ery App"
             </button>
             <h1 className="text-xl font-semibold text-white">{pageTitle}</h1>
             <div className="flex items-center">
-              {/* Aquí podrías poner el AuthStatus si lo prefieres en la cabecera en lugar del sidebar */}
-              {/* O notificaciones, etc. */}
             </div>
           </div>
         </header>
-
-        {/* Área de contenido scrolleable */}
         <main className="flex-1 overflow-x-hidden overflow-y-auto bg-gray-900 p-6 md:p-8">
-          {children} {/* Aquí se renderizará el contenido de cada página */}
+          {children}
         </main>
       </div>
     </div>

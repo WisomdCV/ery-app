@@ -3,10 +3,11 @@
 
 import React, { useEffect, useState, FormEvent } from 'react';
 import { useRouter, useParams } from 'next/navigation';
-import { useAuth } from '@/context/AuthContext';
+import { useSession } from 'next-auth/react'; // 1. Importar useSession
 import MainLayout from '@/components/MainLayout';
 import Link from 'next/link';
 
+// --- Interfaces (sin cambios) ---
 interface UserToEdit {
   id: number;
   nombre: string;
@@ -22,7 +23,8 @@ interface AvailableRole {
 }
 
 export default function EditUserPage() {
-  const { user: adminUser, isLoading: authLoading, token, hasRole } = useAuth();
+  // 2. Usar useSession para obtener la sesión y el estado de carga
+  const { data: session, status } = useSession();
   const router = useRouter();
   const params = useParams();
   const userId = params.userId as string;
@@ -36,113 +38,94 @@ export default function EditUserPage() {
   const [formSuccess, setFormSuccess] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  // 3. useEffect actualizado para usar el estado de NextAuth
   useEffect(() => {
-    if (!authLoading) {
-      if (!adminUser || !token) {
-        router.push('/login');
-        return;
-      }
-      if (!hasRole('administrador')) {
+    if (status === 'loading') {
+      return; // No hacer nada mientras la sesión carga
+    }
+    if (status === 'unauthenticated') {
+      router.push('/login');
+      return;
+    }
+    // 4. Verificar el rol 'administrador' desde la sesión de NextAuth
+    if (status === 'authenticated' && !session?.user?.roles?.includes('administrador')) {
+      setPageLoading(false); // Dejar de cargar para mostrar "Acceso Denegado"
+      return;
+    }
+
+    const fetchData = async () => {
+      if (!userId || isNaN(parseInt(userId))) {
+        setFormError("ID de usuario inválido en la URL.");
         setPageLoading(false);
         return;
       }
+      setPageLoading(true);
+      setFormError(null);
+      setFormSuccess(null);
 
-      const fetchData = async () => {
-        if (!userId || isNaN(parseInt(userId))) {
-          setFormError("ID de usuario inválido en la URL.");
-          setPageLoading(false);
-          return;
+      try {
+        // 5. Las llamadas a la API ya no necesitan enviar el token manualmente
+        const [userResponse, rolesResponse] = await Promise.all([
+          fetch(`/api/admin/users/${userId}`),
+          fetch('/api/roles')
+        ]);
+
+        if (!userResponse.ok) {
+          const errData = await userResponse.json();
+          throw new Error(errData.message || `Error al obtener datos del usuario`);
         }
-        setPageLoading(true);
-        setFormError(null);
-        setFormSuccess(null);
-        console.log(`Fetching data for user ID: ${userId} with token: ${token ? 'Token Present' : 'No Token'}`);
-
-        try {
-          // 1. Obtener detalles del usuario a editar
-          console.log(`Fetching user details from: /api/admin/users/${userId}`);
-          const userRes = await fetch(`/api/admin/users/${userId}`, {
-            headers: { 'Authorization': `Bearer ${token}` },
-          });
-          console.log(`User details response status: ${userRes.status}`);
-          if (!userRes.ok) {
-            const errorText = await userRes.text(); // Leer como texto primero
-            console.error("Error response text (user details):", errorText);
-            try {
-              const errData = JSON.parse(errorText); // Intentar parsear como JSON
-              throw new Error(errData.message || `Error al obtener datos del usuario: ${userRes.status}`);
-            } catch (e) {
-              throw new Error(`Respuesta no JSON del servidor (user details). Status: ${userRes.status}. Respuesta: ${errorText.substring(0,100)}...`);
-            }
-          }
-          const userData: { user: UserToEdit } = await userRes.json();
-          setUserToEdit(userData.user);
-          console.log("User details fetched:", userData.user);
-
-          // 2. Obtener todos los roles disponibles
-          console.log("Fetching available roles from: /api/roles");
-          const rolesRes = await fetch('/api/roles', {
-            headers: { 'Authorization': `Bearer ${token}` },
-          });
-          console.log(`Available roles response status: ${rolesRes.status}`);
-          if (!rolesRes.ok) {
-            const errorText = await rolesRes.text(); // Leer como texto primero
-            console.error("Error response text (available roles):", errorText);
-            try {
-              const errData = JSON.parse(errorText); // Intentar parsear como JSON
-              throw new Error(errData.message || `Error al obtener roles: ${rolesRes.status}`);
-            } catch (e) {
-              throw new Error(`Respuesta no JSON del servidor (available roles). Status: ${rolesRes.status}. Respuesta: ${errorText.substring(0,100)}...`);
-            }
-          }
-          const rolesData: { roles: AvailableRole[] } = await rolesRes.json();
-          setAvailableRoles(rolesData.roles || []);
-          console.log("Available roles fetched:", rolesData.roles);
-
-          // Preseleccionar los roles actuales del usuario
-          if (userData.user && rolesData.roles) {
-            const currentUserRoleIds = new Set<number>();
-            userData.user.roles.forEach(userRoleName => {
-              const roleObj = rolesData.roles.find(r => r.nombre_rol === userRoleName);
-              if (roleObj) {
-                currentUserRoleIds.add(roleObj.id);
-              }
-            });
-            setSelectedRoleIds(currentUserRoleIds);
-            console.log("Current user role IDs preselected:", currentUserRoleIds);
-          }
-
-        } catch (err) {
-          console.error("Error in fetchData for edit page:", err);
-          setFormError(err instanceof Error ? err.message : 'Error desconocido al cargar datos.');
-        } finally {
-          setPageLoading(false);
+        if (!rolesResponse.ok) {
+          const errData = await rolesResponse.json();
+          throw new Error(errData.message || `Error al obtener roles`);
         }
-      };
 
+        const userData: { user: UserToEdit } = await userResponse.json();
+        const rolesData: { roles: AvailableRole[] } = await rolesResponse.json();
+        
+        setUserToEdit(userData.user);
+        setAvailableRoles(rolesData.roles || []);
+
+        // Preseleccionar roles actuales
+        if (userData.user && rolesData.roles) {
+          const currentUserRoleIds = new Set<number>();
+          userData.user.roles.forEach(userRoleName => {
+            const roleObj = rolesData.roles.find(r => r.nombre_rol === userRoleName);
+            if (roleObj) {
+              currentUserRoleIds.add(roleObj.id);
+            }
+          });
+          setSelectedRoleIds(currentUserRoleIds);
+        }
+
+      } catch (err) {
+        console.error("Error fetching data for edit page:", err);
+        setFormError(err instanceof Error ? err.message : 'Error desconocido al cargar datos.');
+      } finally {
+        setPageLoading(false);
+      }
+    };
+
+    if (status === 'authenticated') {
       fetchData();
     }
-  }, [userId, authLoading, adminUser, token, router, hasRole]);
+  }, [userId, status, session, router]);
 
   const handleRoleChange = (roleId: number, isChecked: boolean) => {
     setSelectedRoleIds(prev => {
       const newSelected = new Set(prev);
-      if (isChecked) {
-        newSelected.add(roleId);
-      } else {
-        newSelected.delete(roleId);
-      }
+      if (isChecked) newSelected.add(roleId);
+      else newSelected.delete(roleId);
       return newSelected;
     });
   };
 
   const handleSubmit = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    if (!userToEdit || !token) {
-      setFormError("No se puede guardar, información de usuario o autenticación faltante.");
+    if (!userToEdit) {
+      setFormError("No se puede guardar, información de usuario faltante.");
       return;
     }
-     if (adminUser?.id === userToEdit.id) {
+     if (session?.user?.id === userToEdit.id) {
         const adminRole = availableRoles.find(r => r.nombre_rol === 'administrador');
         if (adminRole && !selectedRoleIds.has(adminRole.id)) {
             alert("Un administrador no puede quitarse a sí mismo el rol de 'administrador'.");
@@ -157,16 +140,13 @@ export default function EditUserPage() {
     try {
       const response = await fetch(`/api/admin/users/${userToEdit.id}/roles`, {
         method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`,
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ roleIds: Array.from(selectedRoleIds) }),
       });
 
       if (!response.ok) {
-        const errorData = await response.json(); // Asumimos que la API de PUT /roles devuelve JSON en error
-        throw new Error(errorData.message || `Error ${response.status}: Fallo al actualizar roles`);
+        const errorData = await response.json();
+        throw new Error(errorData.message || `Error al actualizar roles`);
       }
 
       const successData = await response.json();
@@ -181,34 +161,37 @@ export default function EditUserPage() {
     }
   };
 
-  // Renderizado condicional (carga, no autenticado, no autorizado)
-  if (authLoading || pageLoading) {
+  // 6. Lógica de renderizado condicional actualizada
+  if (status === 'loading' || pageLoading) {
     return (
       <MainLayout pageTitle="Editar Usuario">
-        <div className="flex flex-col items-center justify-center text-center h-full">Cargando datos del usuario...</div>
+        <div className="flex flex-col items-center justify-center text-center h-full">Cargando...</div>
       </MainLayout>
     );
   }
-  if (!adminUser || !token) { 
+
+  if (status === 'unauthenticated') {
     return <MainLayout pageTitle="Redirigiendo"><p>Redirigiendo a inicio de sesión...</p></MainLayout>; 
   }
-  if (!hasRole('administrador')) {
+
+  if (!session?.user?.roles?.includes('administrador')) {
     return (
       <MainLayout pageTitle="Acceso Denegado">
         <div className="flex flex-col items-center justify-center text-center h-full">
           <h1 className="text-4xl font-bold text-red-500 mb-4">Acceso Denegado</h1>
-          <p className="text-xl text-gray-300">No tienes permisos para editar usuarios.</p>
+          <p>No tienes permisos para editar usuarios.</p>
           <Link href="/" className="mt-8 px-6 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-md shadow">Volver a Inicio</Link>
         </div>
       </MainLayout>
     );
   }
-  if (!userToEdit) { // Este es el bloque que muestra el error de la imagen
+  
+  if (!userToEdit) {
     return (
       <MainLayout pageTitle="Error">
         <div className="flex flex-col items-center justify-center text-center h-full">
           <h1 className="text-4xl font-bold text-red-500 mb-4">Error al Cargar Usuario</h1>
-          <p className="text-xl text-gray-300">{formError || "No se pudo cargar la información del usuario especificado."}</p>
+          <p className="text-xl text-gray-300">{formError || "No se pudo cargar la información del usuario."}</p>
           <Link href="/admin/users" className="mt-8 px-6 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-md shadow">Volver a la lista</Link>
         </div>
       </MainLayout>
@@ -230,21 +213,21 @@ export default function EditUserPage() {
           <fieldset>
             <legend className="text-lg font-medium text-gray-200 mb-3">Roles Asignados:</legend>
             <div className="space-y-2">
-              {availableRoles.length > 0 ? availableRoles.map(role => (
+              {availableRoles.map(role => (
                 <label key={role.id} className="flex items-center p-3 bg-gray-700 rounded-md hover:bg-gray-600 cursor-pointer">
                   <input
                     type="checkbox"
                     className="h-5 w-5 text-indigo-500 bg-gray-600 border-gray-500 rounded focus:ring-indigo-400 focus:ring-offset-gray-800"
                     checked={selectedRoleIds.has(role.id)}
                     onChange={(e) => handleRoleChange(role.id, e.target.checked)}
-                    disabled={adminUser?.id === userToEdit.id && role.nombre_rol === 'administrador' && selectedRoleIds.has(role.id) && selectedRoleIds.size === 1}
+                    disabled={session?.user?.id === userToEdit.id && role.nombre_rol === 'administrador'}
                   />
                   <span className="ml-3 text-sm text-gray-300">
                     {role.nombre_rol}
                     {role.descripcion && <span className="block text-xs text-gray-500">{role.descripcion}</span>}
                   </span>
                 </label>
-              )) : <p className="text-gray-400">No hay roles disponibles para asignar o no se pudieron cargar.</p>}
+              ))}
             </div>
           </fieldset>
 

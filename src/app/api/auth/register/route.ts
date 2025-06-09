@@ -3,9 +3,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import { query } from '@/lib/db';
 import bcrypt from 'bcryptjs';
 import { RowDataPacket, ResultSetHeader } from 'mysql2';
-import { z } from 'zod'; // Importar Zod
+import { z } from 'zod';
 
-// 1. Definir el esquema de validación completo con Zod
+// Esquema de validación con Zod (sin cambios)
 const registerSchema = z.object({
   nombre: z.string()
     .min(3, { message: "El nombre debe tener al menos 3 caracteres." })
@@ -15,23 +15,25 @@ const registerSchema = z.object({
     .max(100)
     .regex(/^[a-zA-Z\sñÑáéíóúÁÉÍÓÚ]*$/, { message: "El apellido solo puede contener letras y espacios." })
     .optional()
-    .or(z.literal('')), // Permitir que sea opcional o una cadena vacía
+    .or(z.literal('')),
   email: z.string().email({ message: "Formato de correo electrónico inválido." }),
   password: z.string()
     .min(8, { message: "La contraseña debe tener al menos 8 caracteres." }),
-  fecha_nacimiento: z.string().optional().or(z.literal('')), // Opcional, puedes añadir validación de formato de fecha si quieres
+  fecha_nacimiento: z.string().optional().or(z.literal('')),
   telefono: z.string().max(20).optional().or(z.literal('')),
   direccion: z.string().max(255).optional().or(z.literal('')),
   ciudad: z.string().max(100).optional().or(z.literal('')),
   pais: z.string().max(100).optional().or(z.literal('')),
 });
 
-
-// Interfaz para el usuario existente (para la verificación)
+// Interfaces
 interface ExistingUser extends RowDataPacket {
   id: number;
 }
-
+// Nueva interfaz para obtener el ID de un rol
+interface RoleId extends RowDataPacket {
+    id: number;
+}
 
 export async function POST(request: NextRequest) {
   let requestBody;
@@ -41,11 +43,9 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ message: 'Cuerpo de la solicitud JSON inválido.' }, { status: 400 });
   }
 
-  // 2. Validar el cuerpo de la solicitud contra el esquema de Zod
   const validation = registerSchema.safeParse(requestBody);
 
   if (!validation.success) {
-    // Si la validación falla, devolver los errores
     return NextResponse.json(
       { 
         message: "Datos de entrada inválidos.",
@@ -55,7 +55,6 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  // Si la validación es exitosa, podemos usar los datos validados de forma segura
   const { nombre, apellido, email, password, fecha_nacimiento, telefono, direccion, ciudad, pais } = validation.data;
 
   try {
@@ -71,7 +70,6 @@ export async function POST(request: NextRequest) {
       INSERT INTO usuarios (nombre, apellido, email, password_hash, fecha_nacimiento, telefono, direccion, ciudad, pais, activo)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `;
-    // Usamos todos los datos validados por Zod
     const paramsInsert = [
         nombre, 
         apellido || null, 
@@ -88,8 +86,31 @@ export async function POST(request: NextRequest) {
     const result = await query<ResultSetHeader>(sqlInsert, paramsInsert);
 
     if (result.affectedRows === 1 && result.insertId) {
+      const newUserId = result.insertId;
+      console.log(`Nuevo usuario creado con Email. ID: ${newUserId}`);
+
+      // --- INICIO: LÓGICA DE ASIGNACIÓN DE ROL POR DEFECTO ---
+      try {
+        // 1. Buscar el ID del rol 'usuario_estandar'
+        const roleResults = await query<RoleId[]>("SELECT id FROM roles WHERE nombre_rol = 'usuario_estandar' LIMIT 1");
+        
+        if (roleResults.length > 0) {
+          const standardRoleId = roleResults[0].id;
+          // 2. Insertar la asignación en la tabla usuario_roles
+          await query("INSERT INTO usuario_roles (usuario_id, rol_id) VALUES (?, ?)", [newUserId, standardRoleId]);
+          console.log(`Rol 'usuario_estandar' asignado al nuevo usuario ID: ${newUserId}`);
+        } else {
+          // Esto es importante loguearlo por si el rol no existiera en la BD
+          console.warn("ADVERTENCIA: No se encontró el rol 'usuario_estandar'. El nuevo usuario no tendrá roles por defecto.");
+        }
+      } catch (roleError) {
+        // Loguear el error pero no impedir el registro si solo falla la asignación de rol
+        console.error(`Error al asignar rol por defecto al usuario ID ${newUserId}:`, roleError);
+      }
+      // --- FIN: LÓGICA DE ASIGNACIÓN DE ROL POR DEFECTO ---
+
       const newUser = {
-        id: result.insertId,
+        id: newUserId,
         nombre,
         email,
       };
