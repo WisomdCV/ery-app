@@ -2,53 +2,66 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { query } from '@/lib/db';
 import bcrypt from 'bcryptjs';
-import { RowDataPacket, ResultSetHeader } from 'mysql2'; // Tipos específicos de mysql2
+import { RowDataPacket, ResultSetHeader } from 'mysql2';
+import { z } from 'zod'; // Importar Zod
 
-// Interfaz para el cuerpo de la solicitud (request body)
-interface RegisterRequestBody {
-  nombre: string;
-  apellido?: string;
-  email: string;
-  password: string;
-  fecha_nacimiento?: string; // Formato YYYY-MM-DD
-  telefono?: string;
-  direccion?: string;
-  ciudad?: string;
-  pais?: string;
-}
+// 1. Definir el esquema de validación completo con Zod
+const registerSchema = z.object({
+  nombre: z.string()
+    .min(3, { message: "El nombre debe tener al menos 3 caracteres." })
+    .max(100, { message: "El nombre no puede exceder los 100 caracteres." })
+    .regex(/^[a-zA-Z\sñÑáéíóúÁÉÍÓÚ]+$/, { message: "El nombre solo puede contener letras y espacios." }),
+  apellido: z.string()
+    .max(100)
+    .regex(/^[a-zA-Z\sñÑáéíóúÁÉÍÓÚ]*$/, { message: "El apellido solo puede contener letras y espacios." })
+    .optional()
+    .or(z.literal('')), // Permitir que sea opcional o una cadena vacía
+  email: z.string().email({ message: "Formato de correo electrónico inválido." }),
+  password: z.string()
+    .min(8, { message: "La contraseña debe tener al menos 8 caracteres." }),
+  fecha_nacimiento: z.string().optional().or(z.literal('')), // Opcional, puedes añadir validación de formato de fecha si quieres
+  telefono: z.string().max(20).optional().or(z.literal('')),
+  direccion: z.string().max(255).optional().or(z.literal('')),
+  ciudad: z.string().max(100).optional().or(z.literal('')),
+  pais: z.string().max(100).optional().or(z.literal('')),
+});
+
 
 // Interfaz para el usuario existente (para la verificación)
 interface ExistingUser extends RowDataPacket {
   id: number;
 }
 
-// Ya no se necesita 'InsertResult' si es idéntica a ResultSetHeader, se usa directamente.
 
 export async function POST(request: NextRequest) {
+  let requestBody;
   try {
-    const body = await request.json() as RegisterRequestBody;
-    const {
-      nombre,
-      apellido,
-      email,
-      password,
-      fecha_nacimiento,
-      telefono,
-      direccion,
-      ciudad,
-      pais
-    } = body;
+    requestBody = await request.json();
+  } catch (error) {
+    return NextResponse.json({ message: 'Cuerpo de la solicitud JSON inválido.' }, { status: 400 });
+  }
 
-    if (!nombre || !email || !password) {
-      return NextResponse.json({ message: 'Nombre, email y contraseña son requeridos.' }, { status: 400 });
-    }
-    if (password.length < 6) { // Ejemplo de validación adicional
-        return NextResponse.json({ message: 'La contraseña debe tener al menos 6 caracteres.' }, { status: 400 });
-    }
+  // 2. Validar el cuerpo de la solicitud contra el esquema de Zod
+  const validation = registerSchema.safeParse(requestBody);
 
+  if (!validation.success) {
+    // Si la validación falla, devolver los errores
+    return NextResponse.json(
+      { 
+        message: "Datos de entrada inválidos.",
+        errors: validation.error.flatten().fieldErrors 
+      }, 
+      { status: 400 }
+    );
+  }
+
+  // Si la validación es exitosa, podemos usar los datos validados de forma segura
+  const { nombre, apellido, email, password, fecha_nacimiento, telefono, direccion, ciudad, pais } = validation.data;
+
+  try {
     const existingUserResults = await query<ExistingUser[]>('SELECT id FROM usuarios WHERE email = ?', [email]);
     if (existingUserResults.length > 0) {
-      return NextResponse.json({ message: 'El correo electrónico ya está registrado.' }, { status: 409 }); // 409 Conflict
+      return NextResponse.json({ message: 'El correo electrónico ya está registrado.' }, { status: 409 });
     }
 
     const salt = await bcrypt.genSalt(10);
@@ -58,20 +71,20 @@ export async function POST(request: NextRequest) {
       INSERT INTO usuarios (nombre, apellido, email, password_hash, fecha_nacimiento, telefono, direccion, ciudad, pais, activo)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `;
+    // Usamos todos los datos validados por Zod
     const paramsInsert = [
-      nombre,
-      apellido || null,
-      email,
-      password_hash,
-      fecha_nacimiento || null,
-      telefono || null,
-      direccion || null,
-      ciudad || null,
-      pais || null,
-      true // Por defecto, el usuario está activo
+        nombre, 
+        apellido || null, 
+        email, 
+        password_hash, 
+        fecha_nacimiento || null, 
+        telefono || null, 
+        direccion || null, 
+        ciudad || null, 
+        pais || null, 
+        true
     ];
 
-    // Corregido: Usar ResultSetHeader directamente para el tipo del resultado de la inserción
     const result = await query<ResultSetHeader>(sqlInsert, paramsInsert);
 
     if (result.affectedRows === 1 && result.insertId) {
@@ -79,23 +92,19 @@ export async function POST(request: NextRequest) {
         id: result.insertId,
         nombre,
         email,
-        // No devuelvas el hash de la contraseña ni otros datos sensibles
       };
       return NextResponse.json({ message: 'Usuario registrado exitosamente.', user: newUser }, { status: 201 });
     } else {
-      console.error('Failed to insert user, result:', result);
+      console.error('Fallo al insertar usuario, resultado:', result);
       return NextResponse.json({ message: 'Error al registrar el usuario.' }, { status: 500 });
     }
 
-  } catch (error) { // Corregido: Usar 'unknown' para el tipo de error
-    const typedError = error as { message?: string; code?: string; sqlState?: string }; // Asertar tipo para acceder a propiedades
+  } catch (error) {
+    const typedError = error as { message?: string; code?: string; };
     console.error('Error en /api/auth/register:', typedError);
-    // Verifica si el error es por un campo UNIQUE duplicado (aunque ya lo chequeamos antes)
-    // El código de error ER_DUP_ENTRY es específico de MySQL
-    if (typedError.code === 'ER_DUP_ENTRY' || (typedError.message && typedError.message.includes('ER_DUP_ENTRY'))) {
+    if (typedError.code === 'ER_DUP_ENTRY') {
         return NextResponse.json({ message: 'El correo electrónico ya está registrado (error de BD).' }, { status: 409 });
     }
-    // Manejo de otros errores de base de datos o errores inesperados
     return NextResponse.json({ message: 'Error interno del servidor.', errorDetails: typedError.message }, { status: 500 });
   }
 }

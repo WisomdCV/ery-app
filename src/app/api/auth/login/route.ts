@@ -4,12 +4,13 @@ import { query } from '@/lib/db';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { RowDataPacket } from 'mysql2';
+import { z } from 'zod'; // Importar Zod
 
-// Interfaz para el cuerpo de la solicitud de login
-interface LoginRequestBody {
-  email: string;
-  password: string;
-}
+// 1. Definir el esquema de validación para el login
+const loginSchema = z.object({
+  email: z.string().email({ message: "Formato de correo electrónico inválido." }),
+  password: z.string().min(1, { message: "La contraseña no puede estar vacía." }),
+});
 
 // Interfaz para los datos del usuario que recuperamos de la BD
 interface UserFromDB extends RowDataPacket {
@@ -20,27 +21,41 @@ interface UserFromDB extends RowDataPacket {
   activo: boolean;
 }
 
-// Interfaz para los roles recuperados de la BD
 interface UserRole extends RowDataPacket {
   nombre_rol: string;
 }
 
 export async function POST(request: NextRequest) {
+  let requestBody;
   try {
-    const body = await request.json() as LoginRequestBody;
-    const { email, password } = body;
+    requestBody = await request.json();
+  } catch (error) {
+    return NextResponse.json({ message: 'Cuerpo de la solicitud JSON inválido.' }, { status: 400 });
+  }
 
-    if (!email || !password) {
-      return NextResponse.json({ message: 'Email y contraseña son requeridos.' }, { status: 400 });
-    }
+  // 2. Validar el cuerpo de la solicitud contra el esquema de Zod
+  const validation = loginSchema.safeParse(requestBody);
 
+  if (!validation.success) {
+    return NextResponse.json(
+      { 
+        message: "Datos de entrada inválidos.",
+        errors: validation.error.flatten().fieldErrors 
+      }, 
+      { status: 400 }
+    );
+  }
+  
+  const { email, password } = validation.data;
+
+  try {
     const userResults = await query<UserFromDB[]>(
       'SELECT id, email, nombre, password_hash, activo FROM usuarios WHERE email = ?',
       [email]
     );
 
     if (userResults.length === 0) {
-      return NextResponse.json({ message: 'Credenciales inválidas. Usuario no encontrado.' }, { status: 401 });
+      return NextResponse.json({ message: 'Credenciales inválidas.' }, { status: 401 });
     }
 
     const user = userResults[0];
@@ -52,21 +67,16 @@ export async function POST(request: NextRequest) {
     const isPasswordMatch = await bcrypt.compare(password, user.password_hash);
 
     if (!isPasswordMatch) {
-      return NextResponse.json({ message: 'Credenciales inválidas. Contraseña incorrecta.' }, { status: 401 });
+      return NextResponse.json({ message: 'Credenciales inválidas.' }, { status: 401 });
     }
 
-    // Obtener los roles del usuario
+    // El resto de la lógica sigue igual...
     const rolesResults = await query<UserRole[]>(
-      `SELECT r.nombre_rol
-       FROM roles r
-       JOIN usuario_roles ur ON r.id = ur.rol_id
-       WHERE ur.usuario_id = ?`,
+      `SELECT r.nombre_rol FROM roles r JOIN usuario_roles ur ON r.id = ur.rol_id WHERE ur.usuario_id = ?`,
       [user.id]
     );
-
     const roles = rolesResults.map(role => role.nombre_rol);
 
-    // Si las credenciales son correctas, generar un JWT
     const jwtSecret = process.env.JWT_SECRET;
     if (!jwtSecret) {
       console.error('JWT_SECRET no está definido en las variables de entorno.');
@@ -77,28 +87,24 @@ export async function POST(request: NextRequest) {
       userId: user.id,
       email: user.email,
       nombre: user.nombre,
-      roles: roles, // Incluir los roles en el payload del token
+      roles: roles,
     };
 
-    const token = jwt.sign(tokenPayload, jwtSecret, {
-      expiresIn: '1h', // Por ejemplo, 1 hora
-    });
+    const token = jwt.sign(tokenPayload, jwtSecret, { expiresIn: '1h' });
 
-    const response = NextResponse.json({
+    return NextResponse.json({
       message: 'Inicio de sesión exitoso.',
       user: {
         id: user.id,
         email: user.email,
         nombre: user.nombre,
-        roles: roles, // También devolver los roles en la respuesta del usuario si es útil para el frontend inmediatamente
+        roles: roles,
       },
       token,
     }, { status: 200 });
 
-    return response;
-
   } catch (error) {
-    const typedError = error as { message?: string; code?: string; sqlState?: string };
+    const typedError = error as { message?: string; };
     console.error('Error en /api/auth/login:', typedError);
     return NextResponse.json({ message: 'Error interno del servidor.', errorDetails: typedError.message }, { status: 500 });
   }
