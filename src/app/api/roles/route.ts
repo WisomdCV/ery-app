@@ -1,7 +1,7 @@
 // src/app/api/roles/route.ts
 import { NextRequest, NextResponse } from 'next/server';
-import { verifyAuth } from '@/lib/apiAuthUtils'; // Nuestra función de ayuda para autenticación/autorización
-import { query } from '@/lib/db'; // Nuestra utilidad de base de datos
+import { verifyApiAuth } from '@/lib/apiAuthUtils'; // 1. Usar la nueva utilidad de NextAuth.js
+import { query } from '@/lib/db';
 import { RowDataPacket } from 'mysql2';
 
 // Interfaz para los datos del rol que devolveremos
@@ -9,22 +9,21 @@ interface RoleData extends RowDataPacket {
   id: number;
   nombre_rol: string;
   descripcion: string | null;
-  // fecha_creacion: Date; // Opcional, si quieres devolverla
 }
 
 export async function GET(request: NextRequest) {
-  // Proteger esta ruta: solo para administradores,
-  // ya que la lista de roles se usará en contextos administrativos.
-  const { user: adminUser, errorResponse } = await verifyAuth(request, ['administrador']);
+  // 2. Proteger la ruta con la nueva función. Ya no se pasa 'request'.
+  const { session, errorResponse } = await verifyApiAuth(['administrador']);
 
   if (errorResponse) {
     return errorResponse; // Si hay error de autenticación/autorización, devolverlo
   }
 
-  console.log(`Administrador ${adminUser?.email} (ID: ${adminUser?.userId}) está solicitando la lista de todos los roles.`);
+  // 3. Acceder a la información del admin a través del objeto 'session'
+  console.log(`Administrador ${session?.user?.email} (ID: ${session?.user?.id}) está solicitando la lista de todos los roles.`);
 
   try {
-    // Consultar todos los roles
+    // La consulta a la base de datos sigue siendo la misma
     const roles = await query<RoleData[]>(
       `SELECT id, nombre_rol, descripcion FROM roles ORDER BY nombre_rol ASC`
     );

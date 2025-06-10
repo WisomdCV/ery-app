@@ -1,20 +1,20 @@
 // src/app/api/admin/test-protected/route.ts
 import { NextRequest, NextResponse } from 'next/server';
-import { verifyAuth } from '@/lib/apiAuthUtils'; // Importar nuestra función de ayuda
+import { verifyApiAuth } from '@/lib/apiAuthUtils'; // 1. Usar la nueva utilidad de NextAuth.js
 
 export async function GET(request: NextRequest) {
-  // Proteger esta ruta: solo para administradores
-  const { user, errorResponse } = await verifyAuth(request, ['administrador']);
+  // 2. Proteger la ruta con la nueva función. Ya no se pasa 'request'.
+  const { session, errorResponse } = await verifyApiAuth(['administrador']);
 
   if (errorResponse) {
     return errorResponse; // Si hay error de autenticación/autorización, devolverlo
   }
 
-
+  // 3. Acceder a la información del usuario a través del objeto 'session'
   return NextResponse.json({
-    message: `Hola, Administrador ${user?.nombre}! Has accedido a una ruta protegida.`,
-    userId: user?.userId,
-    userRoles: user?.roles,
+    message: `Hola, Administrador ${session?.user?.name}! Has accedido a una ruta protegida.`,
+    userId: session?.user?.id,
+    userRoles: session?.user?.roles,
   });
 }
 

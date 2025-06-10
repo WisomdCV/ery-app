@@ -18,7 +18,8 @@ interface UserFromApi {
 }
 
 export default function AdminUsersPage() {
-  const { data: session, status } = useSession(); // 2. Usar useSession
+  // 2. Usar useSession para obtener la sesión y el estado de carga
+  const { data: session, status } = useSession();
   const router = useRouter();
 
   const [users, setUsers] = useState<UserFromApi[]>([]);
@@ -30,11 +31,14 @@ export default function AdminUsersPage() {
     setPageLoading(true);
     setFetchError(null);
     try {
-      // 3. La llamada a la API ahora es protegida por la cookie de sesión de NextAuth
+      // 3. La llamada a la API ahora es más simple.
+      // Ya no se necesita enviar la cabecera 'Authorization' manualmente.
+      // NextAuth.js envía la cookie de sesión segura automáticamente con cada solicitud.
       const response = await fetch('/api/admin/users');
 
       if (!response.ok) {
-        const errorData = await response.json();
+        // Capturar el mensaje de error de la API si la respuesta no es exitosa
+        const errorData = await response.json().catch(() => ({ message: 'Fallo al obtener usuarios y la respuesta no es JSON.' }));
         throw new Error(errorData.message || `Error ${response.status}: Fallo al obtener usuarios`);
       }
 
@@ -48,10 +52,10 @@ export default function AdminUsersPage() {
     }
   }, []);
 
-  // 4. useEffect actualizado para usar el estado de NextAuth
+  // 4. El useEffect ahora se basa en el 'status' de la sesión de NextAuth
   useEffect(() => {
     if (status === 'loading') {
-      return; // No hacer nada mientras la sesión carga
+      return; // No hacer nada mientras la sesión se está cargando
     }
     if (status === 'unauthenticated') {
       router.push('/login');
@@ -61,6 +65,7 @@ export default function AdminUsersPage() {
       if (session?.user?.roles?.includes('administrador')) {
         fetchUsers();
       } else {
+        // Si no es admin, deja de cargar para que el render muestre "Acceso Denegado"
         setPageLoading(false);
       }
     }
@@ -99,7 +104,7 @@ export default function AdminUsersPage() {
     }
   };
 
-  // 6. Lógica de renderizado condicional actualizada
+  // 6. Lógica de renderizado condicional actualizada para usar 'status' y 'session'
   if (status === 'loading' || pageLoading) {
     return (
       <MainLayout pageTitle="Gestión de Usuarios">
@@ -115,7 +120,13 @@ export default function AdminUsersPage() {
   }
   
   if (status === 'unauthenticated') {
-    return <MainLayout pageTitle="Redirigiendo"><p>Redirigiendo a inicio de sesión...</p></MainLayout>;
+    return (
+      <MainLayout pageTitle="Redirigiendo">
+        <div className="flex flex-col items-center justify-center text-center h-full">
+          <p>Redirigiendo a inicio de sesión...</p>
+        </div>
+      </MainLayout>
+    );
   }
 
   if (!session?.user?.roles?.includes('administrador')) {

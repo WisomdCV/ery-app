@@ -1,6 +1,6 @@
 // src/app/api/admin/users/[userId]/roles/route.ts
 import { NextRequest, NextResponse } from 'next/server';
-import { verifyAuth } from '@/lib/apiAuthUtils';
+import { verifyApiAuth } from '@/lib/apiAuthUtils'; // 1. Usar la nueva utilidad de NextAuth.js
 import { query } from '@/lib/db';
 import { ResultSetHeader, RowDataPacket } from 'mysql2';
 
@@ -19,7 +19,8 @@ interface RoleCheck extends RowDataPacket {
 }
 
 export async function PUT(request: NextRequest, context: RouteContext) {
-  const { user: adminUser, errorResponse: authError } = await verifyAuth(request, ['administrador']);
+  // 2. Proteger la ruta con la nueva función. Ya no se pasa 'request'.
+  const { session, errorResponse: authError } = await verifyApiAuth(['administrador']);
 
   if (authError) {
     return authError;
@@ -32,7 +33,8 @@ export async function PUT(request: NextRequest, context: RouteContext) {
     return NextResponse.json({ message: 'ID de usuario inválido en la ruta.' }, { status: 400 });
   }
 
-  if (adminUser?.userId === numericUserId) {
+  // 3. Usar el ID del admin desde la sesión para la comprobación
+  if (session?.user?.id === numericUserId) {
     return NextResponse.json({ message: 'Un administrador no puede modificar sus propios roles a través de esta interfaz.' }, { status: 403 });
   }
 
@@ -59,11 +61,9 @@ export async function PUT(request: NextRequest, context: RouteContext) {
       }
     }
 
-    // Iniciar la lógica de actualización de roles
-    // 1. Eliminar todos los roles actuales del usuario
+    // Lógica de actualización de roles
     await query<ResultSetHeader>('DELETE FROM usuario_roles WHERE usuario_id = ?', [numericUserId]);
 
-    // 2. Insertar los nuevos roles uno por uno (si el array roleIds no está vacío)
     if (roleIds.length > 0) {
       for (const roleId of roleIds) {
         await query<ResultSetHeader>(
@@ -81,7 +81,7 @@ export async function PUT(request: NextRequest, context: RouteContext) {
   } catch (error) {
     const typedError = error as { message?: string; code?: string; sqlState?: string };
     console.error(`Error al actualizar roles del usuario ID ${numericUserId}:`, typedError);
-    if (error instanceof SyntaxError) { // Error al parsear el JSON del body
+    if (error instanceof SyntaxError) {
         return NextResponse.json({ message: 'Cuerpo de la solicitud JSON malformado.' }, { status: 400 });
     }
     return NextResponse.json(

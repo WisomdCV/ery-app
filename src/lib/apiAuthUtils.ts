@@ -1,94 +1,61 @@
 // src/lib/apiAuthUtils.ts
 import { NextRequest, NextResponse } from 'next/server';
-import jwt, { JwtPayload } from 'jsonwebtoken';
+import { getServerSession } from 'next-auth/next';
+import { authOptions } from '@/app/api/auth/[...nextauth]/route'; // Importamos las opciones de NextAuth
 
-interface DecodedToken extends JwtPayload {
-  userId: number;
-  email: string;
-  nombre: string;
-  roles: string[];
+// Interfaz para la sesión que esperamos, incluyendo nuestros campos personalizados
+interface AppSession {
+  user?: {
+    id?: number;
+    name?: string | null;
+    email?: string | null;
+    image?: string | null;
+    roles?: string[];
+  };
+  expires: string;
 }
 
 interface AuthResult {
-  user: DecodedToken | null;
+  session: AppSession | null; // Devolveremos la sesión completa
   errorResponse: NextResponse | null;
 }
 
 /**
- * Verifica la autenticación y autorización de una solicitud API.
- * @param request La NextRequest entrante.
+ * Verifica la sesión de NextAuth.js y la autorización del usuario para una API Route.
  * @param requiredRoles Un array opcional de roles requeridos para acceder al recurso.
- * Si se provee, el usuario debe tener al menos uno de estos roles.
- * Si se omite o es un array vacío, solo se verifica la autenticación.
- * @returns Un objeto AuthResult con el usuario decodificado o una respuesta de error.
+ * @returns Un objeto AuthResult con la sesión del usuario o una respuesta de error.
  */
-export async function verifyAuth(
-  request: NextRequest,
+export async function verifyApiAuth(
   requiredRoles: string[] = []
 ): Promise<AuthResult> {
-  const authHeader = request.headers.get('Authorization');
+  // Obtener la sesión del servidor usando las opciones de NextAuth.
+  // Esto lee la cookie segura automáticamente.
+  const session = (await getServerSession(authOptions)) as AppSession | null;
 
-  if (!authHeader) {
+  // 1. Verificar si hay una sesión activa
+  if (!session || !session.user) {
     return {
-      user: null,
-      errorResponse: NextResponse.json({ message: 'Token de autorización no proporcionado.' }, { status: 401 }),
+      session: null,
+      errorResponse: NextResponse.json({ message: 'No autenticado.' }, { status: 401 }),
     };
   }
 
-  const tokenParts = authHeader.split(' ');
-  if (tokenParts.length !== 2 || tokenParts[0].toLowerCase() !== 'bearer' || !tokenParts[1]) {
-    return {
-      user: null,
-      errorResponse: NextResponse.json({ message: 'Formato de token inválido. Se esperaba "Bearer <token>".' }, { status: 401 }),
-    };
-  }
+  // 2. Verificar si se requieren roles específicos
+  if (requiredRoles.length > 0) {
+    const userRoles = session.user.roles || [];
+    const userHasRequiredRole = requiredRoles.some(role => userRoles.includes(role));
 
-  const token = tokenParts[1];
-  const jwtSecret = process.env.JWT_SECRET;
-
-  if (!jwtSecret) {
-    console.error('JWT_SECRET no está definido en las variables de entorno.');
-    return {
-      user: null,
-      errorResponse: NextResponse.json({ message: 'Error de configuración del servidor (JWT Secret).' }, { status: 500 }),
-    };
-  }
-
-  try {
-    const decoded = jwt.verify(token, jwtSecret) as DecodedToken;
-
-    // Verificar si se requieren roles específicos
-    if (requiredRoles.length > 0) {
-      const userHasRequiredRole = decoded.roles && decoded.roles.some(userRole => requiredRoles.includes(userRole));
-      if (!userHasRequiredRole) {
-        return {
-          user: null,
-          errorResponse: NextResponse.json(
-            { message: `Acceso denegado. Se requiere uno de los siguientes roles: ${requiredRoles.join(', ')}.` },
-            { status: 403 }
-          ),
-        };
-      }
+    if (!userHasRequiredRole) {
+      return {
+        session: null,
+        errorResponse: NextResponse.json(
+          { message: `Acceso denegado. Se requiere uno de los siguientes roles: ${requiredRoles.join(', ')}.` },
+          { status: 403 }
+        ),
+      };
     }
-
-    // Autenticación y autorización (si se requirió) exitosas
-    return { user: decoded, errorResponse: null };
-
-  } catch (error) {
-    let errorMessage = 'Token inválido o expirado.';
-    let statusCode = 401; // No autorizado por token inválido
-
-    if (error instanceof jwt.TokenExpiredError) {
-      errorMessage = 'El token ha expirado.';
-      statusCode = 401; // O 403 si prefieres para expirado
-    } else if (error instanceof jwt.JsonWebTokenError) {
-      errorMessage = 'Token inválido.';
-    } else {
-      // Otros errores inesperados durante la verificación del token
-      console.error('Error inesperado al verificar el token:', error);
-      errorMessage = 'Error al procesar el token.';
-      statusCode = 500; // Error interno del servidor
-    }
-    return { user: null, errorResponse: NextResponse.json({ message: errorMessage }, { status: statusCode }) };
   }
+
+  // Autenticación y autorización (si se requirió) exitosas
+  return { session, errorResponse: null };
 }
