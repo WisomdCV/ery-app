@@ -54,7 +54,7 @@ export default function DashboardPage() {
 
   // Verificar si el usuario tiene el rol de administrador
   // Accedemos a los roles desde session.user.roles, que hemos configurado en el callback de NextAuth
-  const hasAdminRole = user.roles?.includes('adminEry');
+  const hasAdminRole = user.roles?.includes('administrador');
 
   if (!hasAdminRole) {
     return (
