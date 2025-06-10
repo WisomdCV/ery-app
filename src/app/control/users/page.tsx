@@ -7,7 +7,6 @@ import { useSession } from 'next-auth/react';
 import MainLayout from '@/components/MainLayout';
 import Link from 'next/link';
 
-// Esta interfaz puede ser la misma que la de la página de admin
 interface UserFromApi {
   id: number;
   nombre: string;
@@ -53,27 +52,29 @@ export default function ControlUsersPage() {
     if (status === 'loading') return;
     if (status === 'unauthenticated') {
       router.push('/login');
+      return;
     }
-    if (status === 'authenticated') {
-      // Proteger esta página para 'moderador_contenido'
-      if (session?.user?.roles?.includes('moderador_contenido')) {
-        fetchUsers();
-      } else {
-        setPageLoading(false); // Dejar de cargar para mostrar "Acceso Denegado"
-      }
+    // Esta página es accesible para moderadores y administradores
+    const canAccess = session?.user?.roles?.includes('administrador') || session?.user?.roles?.includes('moderador_contenido');
+    if (canAccess) {
+      fetchUsers();
+    } else {
+      setPageLoading(false); // Dejar de cargar para mostrar "Acceso Denegado"
     }
   }, [status, session, router, fetchUsers]);
 
   const handleToggleActive = async (userId: number, currentIsActive: boolean) => {
-    // La lógica de negocio real está en la API, pero esta llamada funciona igual
     setActionLoading(prev => ({ ...prev, [userId]: true }));
     try {
+      // Esta API ya tiene la lógica para que un moderador no edite a otro admin/mod
       const response = await fetch(`/api/admin/users/${userId}/toggle-active`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ activo: !currentIsActive }),
       });
-      if (!response.ok) { throw new Error(await response.text()); }
+      const data = await response.json();
+      if (!response.ok) { throw new Error(data.message); }
+      
       setUsers(prevUsers => prevUsers.map(u => u.id === userId ? { ...u, activo: !currentIsActive } : u));
       alert(`Usuario ${userId} ha sido ${!currentIsActive ? 'activado' : 'desactivado'}.`);
     } catch (err) {
@@ -83,11 +84,13 @@ export default function ControlUsersPage() {
     }
   };
 
+  const canAccessPage = session?.user?.roles?.includes('administrador') || session?.user?.roles?.includes('moderador_contenido');
+
   if (status === 'loading' || pageLoading) {
     return <MainLayout pageTitle="Control de Usuarios"><div className="text-center">Cargando...</div></MainLayout>;
   }
   
-  if (status === 'unauthenticated' || !session?.user?.roles?.includes('moderador_contenido')) {
+  if (!canAccessPage) {
     return (
       <MainLayout pageTitle="Acceso Denegado">
         <div className="flex flex-col items-center justify-center text-center h-full">
@@ -120,7 +123,7 @@ export default function ControlUsersPage() {
                 users.map((userItem) => (
                   <tr key={userItem.id} className="hover:bg-gray-600 transition-colors duration-150">
                     <td className="px-3 py-4 text-xs sm:text-sm text-gray-200">{userItem.id}</td>
-                    <td className="px-3 py-4 text-xs sm:text-sm text-gray-200">{userItem.nombre}</td>
+                    <td className="px-3 py-4 text-xs sm:text-sm text-gray-200">{userItem.nombre} {userItem.apellido}</td>
                     <td className="px-3 py-4 text-xs sm:text-sm text-gray-200">{userItem.email}</td>
                     <td className="px-3 py-4 text-xs sm:text-sm">
                       <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${userItem.activo ? 'bg-green-700 text-green-100' : 'bg-red-700 text-red-100'}`}>

@@ -86,10 +86,12 @@ export default function EditUserDetailsPage() {
     setFormError(null);
     setFormSuccess(null);
 
+    // Validar con Zod antes de enviar
     const validation = editUserSchema.safeParse(formData);
     if (!validation.success) {
+      // Unir todos los mensajes de error en uno solo para mostrarlo
       const errorMsg = Object.values(validation.error.flatten().fieldErrors).flat().join(' ');
-      setFormError(errorMsg);
+      setFormError(errorMsg || "Por favor, corrige los errores en el formulario.");
       setIsSubmitting(false);
       return;
     }
@@ -122,7 +124,7 @@ export default function EditUserDetailsPage() {
     }
   };
   
-  // Renderizado condicional
+  // --- Renderizado Condicional ---
   if (status === 'loading' || pageLoading) {
     return <MainLayout pageTitle="Editar Usuario"><div className="text-center">Cargando...</div></MainLayout>;
   }
@@ -130,16 +132,20 @@ export default function EditUserDetailsPage() {
   const canAccess = session?.user?.roles?.includes('administrador') || session?.user?.roles?.includes('moderador_contenido');
   if (!canAccess) {
     return (
-      <MainLayout pageTitle="Acceso Denegado">
-        <div className="text-center text-red-500">No tienes permisos para acceder a esta página.</div>
-      </MainLayout>
+        <MainLayout pageTitle="Acceso Denegado">
+            <div className="text-center text-red-500">No tienes permisos para acceder a esta página.</div>
+        </MainLayout>
     );
   }
   
-  if (formError && !formData.nombre) { // Si hubo un error al cargar los datos iniciales
+  // Si hubo un error al cargar los datos iniciales
+  if (formError && !formData.nombre) {
      return (
       <MainLayout pageTitle="Error">
         <div className="text-center text-red-500">{formError}</div>
+        <div className="text-center mt-4">
+          <Link href="/control/users" className="text-indigo-400 hover:underline">Volver al Control de Usuarios</Link>
+        </div>
       </MainLayout>
      );
   }
