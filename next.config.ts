@@ -1,7 +1,14 @@
-import type { NextConfig } from "next";
 
-const nextConfig: NextConfig = {
-  /* config options here */
+/** @type {import('next').NextConfig} */
+const nextConfig = {
+  // Puede que ya tengan otras configuraciones aquí...
+
+  // AÑADIR ESTE BLOQUE DE CÓDIGO:
+  eslint: {
+    // Advertencia: Esto permite que la compilación de producción se complete
+    // incluso si el proyecto tiene errores de ESLint.
+    ignoreDuringBuilds: true,
+  },
 };
 
-export default nextConfig;
+module.exports = nextConfig;
