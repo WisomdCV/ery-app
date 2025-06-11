@@ -9,7 +9,8 @@ const path = require('path');
 require('dotenv').config({ path: path.resolve(process.cwd(), '.env.local') });
 
 // --- Configuración ---
-const NUM_USERS_TO_CREATE = 100;
+const NUM_USERS_TO_CREATE = 30000; // <--- Cambio principal aquí
+const CHUNK_SIZE = 1000; // Tamaño del lote para inserciones
 const DEFAULT_PASSWORD = 'password123';
 
 // --- Configuración de la Base de Datos ---
@@ -39,18 +40,16 @@ async function seedDatabase() {
     const standardRoleId = roles[0].id;
     console.log(`✓ Rol 'usuario_estandar' encontrado con ID: ${standardRoleId}`);
 
-    console.log(`⚙️  Generando ${NUM_USERS_TO_CREATE} usuarios de prueba...`);
-    const usersToInsert = [];
+    console.log(`⚙️  Generando e insertando ${NUM_USERS_TO_CREATE} usuarios en lotes de ${CHUNK_SIZE}...`);
     const passwordHash = await bcrypt.hash(DEFAULT_PASSWORD, 10);
+    
+    let usersToInsert = [];
+    let totalUsersCreated = 0;
 
     for (let i = 0; i < NUM_USERS_TO_CREATE; i++) {
       const nombre = faker.person.firstName();
       const apellido = faker.person.lastName();
       const email = faker.internet.email({ firstName: nombre, lastName: apellido, provider: 'example.com' }).toLowerCase();
-
-      // --- CORRECCIÓN ---
-      // Generar un número de teléfono con un formato simple que quepa en VARCHAR(20)
-      const telefono = faker.phone.number('9##-###-###'); 
 
       usersToInsert.push([
         nombre,
@@ -63,33 +62,39 @@ async function seedDatabase() {
         faker.location.country(),
         true
       ]);
+
+      // Si el lote está lleno o es la última iteración, inserta los datos
+      if (usersToInsert.length === CHUNK_SIZE || i === NUM_USERS_TO_CREATE - 1) {
+        console.log(`➕ Insertando lote de ${usersToInsert.length} usuarios...`);
+        const sqlInsertUsers = `
+          INSERT INTO usuarios (nombre, apellido, email, password_hash, fecha_nacimiento, direccion, ciudad, pais, activo)
+          VALUES ?
+        `;
+        const [result] = await connection.query(sqlInsertUsers, [usersToInsert]);
+        const firstInsertedId = result.insertId;
+        console.log(`✓ ${result.affectedRows} usuarios creados exitosamente en este lote.`);
+        totalUsersCreated += result.affectedRows;
+
+        console.log("🔗 Asignando roles a los nuevos usuarios del lote...");
+        const userRolesToInsert = [];
+        for (let j = 0; j < result.affectedRows; j++) {
+            const newUserId = firstInsertedId + j;
+            userRolesToInsert.push([newUserId, standardRoleId]);
+        }
+
+        const sqlInsertRoles = `
+            INSERT INTO usuario_roles (usuario_id, rol_id) VALUES ?
+        `;
+        await connection.query(sqlInsertRoles, [userRolesToInsert]);
+        console.log(`✓ Rol asignado a ${userRolesToInsert.length} nuevos usuarios.`);
+
+        // Limpia el array para el siguiente lote
+        usersToInsert = []; 
+      }
     }
-    console.log('✓ Datos de usuario generados.');
 
-    console.log('➕ Insertando nuevos usuarios en la tabla `usuarios`...');
-    const sqlInsertUsers = `
-      INSERT INTO usuarios (nombre, apellido, email, password_hash, fecha_nacimiento, direccion, ciudad, pais, activo)
-      VALUES ?
-    `;
-    const [result] = await connection.query(sqlInsertUsers, [usersToInsert]);
-    const firstInsertedId = result.insertId;
-    console.log(`✓ ${result.affectedRows} usuarios creados exitosamente.`);
-
-    console.log("🔗 Asignando roles a los nuevos usuarios...");
-    const userRolesToInsert = [];
-    for (let i = 0; i < result.affectedRows; i++) {
-        const newUserId = firstInsertedId + i;
-        userRolesToInsert.push([newUserId, standardRoleId]);
-    }
-
-    const sqlInsertRoles = `
-        INSERT INTO usuario_roles (usuario_id, rol_id) VALUES ?
-    `;
-    await connection.query(sqlInsertRoles, [userRolesToInsert]);
-    console.log(`✓ Rol asignado a ${userRolesToInsert.length} nuevos usuarios.`);
-
-    console.log('\n� ¡Proceso completado! La base de datos ha sido poblada con datos de prueba.');
-    console.log(`- Se crearon ${NUM_USERS_TO_CREATE} usuarios.`);
+    console.log('\n🚀 ¡Proceso completado! La base de datos ha sido poblada con datos de prueba.');
+    console.log(`- Se crearon un total de ${totalUsersCreated} usuarios.`);
     console.log(`- La contraseña para todos los usuarios de prueba es: "${DEFAULT_PASSWORD}"`);
 
   } catch (error) {
